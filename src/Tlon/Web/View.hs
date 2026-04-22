@@ -76,9 +76,7 @@ renderGamePage debugEnabled runningGame maybePlayer maybeSecondsRemaining =
    in
     layout ("Tlon Game " <> Text.pack gameLabel) $ do
       if runningStarted runningGame
-        then do
-          renderGameShell debugEnabled runningGame maybePlayer maybeSecondsRemaining
-          renderAgentationMount runningGame
+        then renderGameShell debugEnabled runningGame maybePlayer maybeSecondsRemaining
         else renderLobbyShell debugEnabled runningGame maybePlayer
 
 renderGameShell :: Bool -> RunningGame -> Maybe HumanPlayer -> Maybe Int -> Html ()
@@ -874,18 +872,6 @@ npcSeatName seatIndex runningGame =
   case Map.lookup (EntityId seatIndex) (gameEntities (runningState runningGame)) of
     Just entity -> entityName entity <> " (NPC)"
     Nothing -> "Reserved NPC"
-
-renderAgentationMount :: RunningGame -> Html ()
-renderAgentationMount runningGame = do
-  div_
-    [ id_ "agentation-root",
-      makeAttribute "data-endpoint" "http://localhost:4747",
-      makeAttribute "data-session-id" (Text.pack ("tlon-game-" ++ showGameId (runningGameId runningGame)))
-    ]
-    mempty
-  with
-    (script_ ("" :: Text.Text))
-    [src_ "/static/agentation.bundle.js"]
 
 scopedBasePath :: RunningGame -> Maybe HumanPlayer -> String
 scopedBasePath runningGame maybePlayer =

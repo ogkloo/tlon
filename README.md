@@ -76,8 +76,8 @@ just web-watch 8080 --debug
 
 What those do:
 
-- `just web 8080`: build the bundled browser assets and run the web server once
-- `just web-watch 8080`: rebuild and restart the server when Haskell or client files change
+- `just web 8080`: run the web server once
+- `just web-watch 8080`: rebuild and restart the server when Haskell, static, or script files change
 - `just web-watch 8080 --debug`: same as above, but enables debug-only controls such as `Reset All Games`
 
 The web server defaults to `http://127.0.0.1:8080`.

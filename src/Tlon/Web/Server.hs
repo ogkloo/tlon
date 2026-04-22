@@ -31,13 +31,9 @@ runWebServer port debugEnabled = do
   stateVar <- newTVarIO initialServerState
   reloadToken <- LazyText.pack . show . hashUnique <$> newUnique
   htmxPath <- resolveStaticAssetPath "htmx.min.js"
-  agentationPath <- resolveStaticAssetPath "agentation.bundle.js"
   scotty port $ do
     get (regex "^/static/htmx\\.min\\.js$") $
       file htmxPath
-
-    get (regex "^/static/agentation\\.bundle\\.js$") $
-      file agentationPath
 
     get "/dev/reload-token" $
       text reloadToken

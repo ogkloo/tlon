@@ -4,7 +4,7 @@ version:         0.1.0.0
 synopsis:        A game about markets on top of lotteries
 license:         NONE
 build-type:      Simple
-data-files:      static/htmx.min.js, static/agentation.bundle.js
+data-files:      static/htmx.min.js
 
 library
   autogen-modules:
