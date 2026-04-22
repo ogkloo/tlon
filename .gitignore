@@ -9,3 +9,4 @@ cabal.project.local
 cabal.project.local~
 node_modules/
 npm-debug.log*
+static/agentation.bundle.js

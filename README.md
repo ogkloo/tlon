@@ -69,6 +69,7 @@ The browser-facing implementation is now a server-rendered web app built from th
 Common local commands:
 
 ```sh
+npm install
 just web 8080
 just web-watch 8080
 just web-watch 8080 --debug
@@ -78,7 +79,9 @@ What those do:
 
 - `just web 8080`: run the web server once
 - `just web-watch 8080`: rebuild and restart the server when Haskell, static, or script files change
-- `just web-watch 8080 --debug`: same as above, but enables debug-only controls such as `Reset All Games`
+- `just web-watch 8080 --debug`: same as above, but enables debug-only controls such as `Reset All Games` and mounts Agentation on game pages
+
+The web flow now has a small npm-managed dev dependency for Agentation. The generated browser bundle is rebuilt locally and served from `static/agentation.bundle.js`, but that file is ignored by git.
 
 The web server defaults to `http://127.0.0.1:8080`.
 
