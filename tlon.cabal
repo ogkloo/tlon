@@ -1,0 +1,72 @@
+cabal-version:   3.0
+name:            tlon
+version:         0.1.0.0
+synopsis:        A game about markets on top of lotteries
+license:         NONE
+build-type:      Simple
+data-files:      static/htmx.min.js, static/agentation.bundle.js
+
+library
+  autogen-modules:
+    Paths_tlon
+  other-modules:
+    Paths_tlon
+  exposed-modules:
+    Tlon
+    Tlon.Core.Engine
+    Tlon.Core.Event
+    Tlon.Core.OrderBook
+    Tlon.Core.Rng
+    Tlon.Core.State
+    Tlon.Core.Types
+    Tlon.Game.Default.Config
+    Tlon.Game.Default.Rules
+    Tlon.Game.Default.Setup
+    Tlon.Game.Default.View
+    Tlon.Web.Api
+    Tlon.Web.Server
+    Tlon.Web.State
+    Tlon.Web.View
+  hs-source-dirs:  src
+  default-language: Haskell2010
+  build-depends:
+    base >=4.14 && <5,
+    aeson,
+    bytestring,
+    containers,
+    directory,
+    filepath,
+    http-types,
+    lucid,
+    scotty,
+    stm,
+    text,
+    wai,
+    warp
+
+executable tlon
+  main-is:         Main.hs
+  hs-source-dirs:  app
+  default-language: Haskell2010
+  build-depends:
+    base >=4.14 && <5,
+    containers,
+    tlon
+
+executable tlon-web
+  main-is:         WebMain.hs
+  hs-source-dirs:  app
+  default-language: Haskell2010
+  build-depends:
+    base >=4.14 && <5,
+    tlon
+
+test-suite tlon-test
+  type:            exitcode-stdio-1.0
+  main-is:         Spec.hs
+  hs-source-dirs:  test
+  default-language: Haskell2010
+  build-depends:
+    base >=4.14 && <5,
+    containers,
+    tlon
