@@ -2,6 +2,27 @@
 
 This document sketches a simple first web interface for Tlon that fits the current repo and toolchain.
 
+## Current Status
+
+The repo now has a working first-pass web implementation rather than just a sketch. The live shape still matches the broad approach in this document:
+
+- a single Haskell web server
+- server-rendered HTML via Lucid
+- in-memory game state
+- partial updates and polling instead of a separate SPA
+
+Implemented so far:
+
+- lobby creation with per-player links
+- optional NPC seats at game creation
+- manual round submission, plus optional timed auto-resolution
+- staged player actions for limit orders and lottery tickets
+- latest round report, inventory, holdings, and history views
+- debug-only controls behind a `--debug` flag, including `Reset All Games`
+- watched local development through `just web-watch 8080 [--debug]`
+
+The rest of this document remains useful as rationale and architectural context, but some sections describe the intended first pass that now exists in code.
+
 The main constraint is that the game engine is already pure Haskell and the project is already distributed through Nix and Cabal. The first web layer should preserve that rather than introducing a separate frontend build system immediately.
 
 ## Recommendation

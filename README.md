@@ -62,6 +62,43 @@ What those targets map to:
 - `exe:tlon-web`: the web executable in `app/WebMain.hs`
 - `test:tlon-test`: the test suite in `test/Spec.hs`
 
+## Web Development
+
+The browser-facing implementation is now a server-rendered web app built from the same Haskell package.
+
+Common local commands:
+
+```sh
+just web 8080
+just web-watch 8080
+just web-watch 8080 --debug
+```
+
+What those do:
+
+- `just web 8080`: build the bundled browser assets and run the web server once
+- `just web-watch 8080`: rebuild and restart the server when Haskell or client files change
+- `just web-watch 8080 --debug`: same as above, but enables debug-only controls such as `Reset All Games`
+
+The web server defaults to `http://127.0.0.1:8080`.
+
+Current web flow:
+
+- create a lobby with a chosen number of human seats
+- optionally reserve NPC seats at lobby creation
+- share per-player URLs
+- start the game once all human seats are filled
+- stage orders and lottery tickets per player
+- submit turns manually, or let timed rounds auto-resolve if a timer was configured
+
+Player pages currently surface:
+
+- latest round report
+- per-player inventory
+- staged actions
+- seat table and status
+- global holdings and round history
+
 ## Fast Feedback Tools
 
 These tools are available inside the Nix shell:
