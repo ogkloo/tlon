@@ -41,6 +41,7 @@ library
     scotty,
     stm,
     text,
+    time,
     wai,
     warp
 
@@ -69,4 +70,5 @@ test-suite tlon-test
   build-depends:
     base >=4.14 && <5,
     containers,
+    time,
     tlon

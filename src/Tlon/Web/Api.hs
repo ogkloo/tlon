@@ -19,6 +19,11 @@ gameJson runningGame =
    in
     object
       [ "gameId" .= showGameId (runningGameId runningGame),
+        "started" .= runningStarted runningGame,
+        "seatCount" .= runningSeatCount runningGame,
+        "humanSeatCount" .= humanSeatCount runningGame,
+        "npcCount" .= runningNpcCount runningGame,
+        "participants" .= map renderHumanPlayer (runningParticipants runningGame),
         "roundNumber" .= gameRoundNumber state,
         "winner" .= fmap showEntityId (gameWinner state),
         "redemptionTable" .= map renderAssetQuantity (Map.toList (gameRedemptionTable state)),
@@ -43,11 +48,19 @@ reportJson report =
 entitySummary :: GameState -> Entity -> Value
 entitySummary state entity =
   object
-      [ "entityId" .= showEntityId (entityId entity),
-        "name" .= entityName entity,
+    [ "entityId" .= showEntityId (entityId entity),
+      "name" .= entityName entity,
       "kind" .= show (entityKind entity),
       "alive" .= entityAlive entity,
       "holdings" .= map renderAssetQuantity (Map.toList (Map.findWithDefault Map.empty (entityId entity) (gameHoldings state)))
+    ]
+
+renderHumanPlayer :: HumanPlayer -> Value
+renderHumanPlayer participant =
+  object
+    [ "playerId" .= showPlayerId (humanPlayerId participant),
+      "name" .= humanPlayerName participant,
+      "entityId" .= fmap showEntityId (humanPlayerEntityId participant)
     ]
 
 renderAssetQuantity :: (AssetId, Quantity) -> Value
@@ -127,3 +140,6 @@ showEntityId (EntityId entityId) = show entityId
 
 showGameId :: GameId -> String
 showGameId (GameId gameId) = show gameId
+
+showPlayerId :: PlayerId -> String
+showPlayerId (PlayerId playerId) = show playerId

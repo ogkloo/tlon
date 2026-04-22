@@ -2,6 +2,7 @@ module Main where
 
 import qualified Data.Map.Strict as Map
 import System.Exit (exitFailure)
+import Data.Time.Clock (UTCTime, addUTCTime)
 import Tlon
 
 main :: IO ()
@@ -11,6 +12,13 @@ main = do
   runTest "round settles fills then redeems and advances the table" testRoundSettlementAndRedemption
   runTest "unfilled remainder expires and grants are published for next round" testExpiryAndGrantReporting
   runTest "same entity cannot post opposite-side orders on one pair" testOpposingSideRejection
+  runTest "lobby creation and joining assigns human seats on start" testLobbyFlow
+  runTest "lobby can reserve npc seats and start without extra human joins" testLobbyNpcSeats
+  runTest "players can stage orders and lottery tickets" testPlayerActionStaging
+  runTest "submitted staged actions feed the resolved round" testSubmittedActionsResolve
+  runTest "manual rounds wait for every player submission" testManualRoundSubmission
+  runTest "timed rounds auto-resolve after the deadline" testTimedRoundSubmission
+  runTest "reset all games clears the server state" testResetAllGames
   runTest "advance game by N rounds appends history" testAdvanceGameBy
   runTest "advance to round stops at target round" testAdvanceGameToRound
   runTest "advance to end stops at winner" testAdvanceGameToEnd
@@ -188,6 +196,144 @@ testOpposingSideRejection = do
       putStrLn "FAILED: expected exactly one invalid order"
       exitFailure
 
+testLobbyFlow :: IO ()
+testLobbyFlow = do
+  let now = fixedTime
+      (gameId, creatorId, serverState0) = createLobby "Alice" 3 0 Nothing initialServerState
+      Just lobbyGame = getGame gameId serverState0
+  assertBool "new lobby is not started yet" (not (runningStarted lobbyGame))
+  assertEqual "creator is added to lobby" 1 (length (runningParticipants lobbyGame))
+  assertEqual "creator keeps player id" (Just creatorId) (fmap humanPlayerId (getPlayer creatorId lobbyGame))
+
+  let Just (bobId, serverState1) = joinGame gameId "Bob" serverState0
+      Just (caraId, serverState2) = joinGame gameId "Cara" serverState1
+      Just fullLobby = getGame gameId serverState2
+  assertEqual "lobby fills all seats" 3 (length (runningParticipants fullLobby))
+  assertEqual "full lobby rejects extra join" Nothing (joinGame gameId "Dana" serverState2)
+
+  let Just serverState3 = startGame now gameId serverState2
+      Just startedGame = getGame gameId serverState3
+      playerNames =
+        [ entityName (gameEntities (runningState startedGame) Map.! EntityId 1),
+          entityName (gameEntities (runningState startedGame) Map.! EntityId 2),
+          entityName (gameEntities (runningState startedGame) Map.! EntityId 3)
+        ]
+  assertBool "started game flips started flag" (runningStarted startedGame)
+  assertEqual "human names are assigned to seats in join order" ["Alice", "Bob", "Cara"] playerNames
+  assertEqual "creator receives first seat" (Just (EntityId 1)) (humanPlayerEntityId =<< getPlayer creatorId startedGame)
+  assertEqual "second joiner receives second seat" (Just (EntityId 2)) (humanPlayerEntityId =<< getPlayer bobId startedGame)
+  assertEqual "third joiner receives third seat" (Just (EntityId 3)) (humanPlayerEntityId =<< getPlayer caraId startedGame)
+
+testLobbyNpcSeats :: IO ()
+testLobbyNpcSeats = do
+  let now = fixedTime
+      (gameId, creatorId, serverState0) = createLobby "Alice" 1 2 Nothing initialServerState
+      Just lobbyGame = getGame gameId serverState0
+      Just serverState1 = startGame now gameId serverState0
+      Just startedGame = getGame gameId serverState1
+  assertEqual "one human seat is required" 1 (humanSeatCount lobbyGame)
+  assertEqual "two npc seats are reserved" 2 (runningNpcCount lobbyGame)
+  assertEqual "single human lobby can start with reserved npcs" True (runningStarted startedGame)
+  assertEqual "creator keeps the first seat" (Just (EntityId 1)) (humanPlayerEntityId =<< getPlayer creatorId startedGame)
+  assertBool "npc seat remains computer-controlled" (Map.lookup (EntityId 2) (gameEntities (runningState startedGame)) /= Nothing)
+
+testPlayerActionStaging :: IO ()
+testPlayerActionStaging = do
+  let now = fixedTime
+      (gameId, aliceId, serverState0) = createLobby "Alice" 2 0 Nothing initialServerState
+      Just (_, serverState1) = joinGame gameId "Bob" serverState0
+      Just serverState2 = startGame now gameId serverState1
+      Just serverState3 = stageLimitOrder gameId aliceId Buy TLN101 2 3 serverState2
+      Just serverState4 = setTicketCount gameId aliceId 2 serverState3
+      Just runningGame = getGame gameId serverState4
+      plan = getPlayerPlan aliceId runningGame
+  assertEqual "one staged order is stored" 1 (length (planOrders plan))
+  assertEqual "ticket count is stored" 2 (planTicketCount plan)
+  case planOrders plan of
+    [order] -> do
+      assertEqual "staged order side" Buy (orderSide order)
+      assertEqual "staged order asset" TLN101 (orderBaseAsset order)
+      assertEqual "staged order quantity" 2 (orderQuantity order)
+      assertEqual "staged order price" 3 (orderLimitPrice order)
+    _ -> do
+      putStrLn "FAILED: expected exactly one staged order"
+      exitFailure
+
+testSubmittedActionsResolve :: IO ()
+testSubmittedActionsResolve = do
+  let now = fixedTime
+      (gameId, aliceId, serverState0) = createLobby "Alice" 2 0 Nothing initialServerState
+      Just (bobId, serverState1) = joinGame gameId "Bob" serverState0
+      Just serverState2 = startGame now gameId serverState1
+      Just serverState3 = stageLimitOrder gameId aliceId Buy TLN101 1 2 serverState2
+      Just serverState4 = setTicketCount gameId aliceId 1 serverState3
+      Just serverState5 = stageLimitOrder gameId bobId Sell TLN101 1 2 serverState4
+      Just serverState6 = submitTurn now 1 gameId aliceId serverState5
+      Just serverState7 = submitTurn now 1 gameId bobId serverState6
+      Just runningGame = getGame gameId serverState7
+      Just report = gamePreviousReport (runningState runningGame)
+  assertEqual "round advances after submitted actions resolve" 2 (gameRoundNumber (runningState runningGame))
+  assertEqual "submitted staged orders reach the report" 2 (length (reportSubmittedOrders report))
+  assertEqual "the staged match fills" 1 (length (reportFills report))
+  assertBool "ticket lottery result is recorded" (runningLatestTicketLottery runningGame /= Nothing)
+  case runningLatestTicketLottery runningGame of
+    Just ticketResult ->
+      assertEqual "one ticket purchase recorded" [(EntityId 1, 1)] (ticketLotteryPurchases ticketResult)
+    Nothing -> do
+      putStrLn "FAILED: expected a ticket lottery result"
+      exitFailure
+
+testManualRoundSubmission :: IO ()
+testManualRoundSubmission = do
+  let now = fixedTime
+      (gameId, aliceId, serverState0) = createLobby "Alice" 2 0 Nothing initialServerState
+      Just (bobId, serverState1) = joinGame gameId "Bob" serverState0
+      Just serverState2 = startGame now gameId serverState1
+      Just startedGame = getGame gameId serverState2
+  assertEqual "no players submitted at round start" [] (runningSubmittedPlayers startedGame)
+
+  let Just serverState3 = submitTurn now 1 gameId aliceId serverState2
+      Just afterAlice = getGame gameId serverState3
+  assertEqual "first submitter is recorded" [aliceId] (runningSubmittedPlayers afterAlice)
+  assertEqual "round does not advance after one submit" 1 (gameRoundNumber (runningState afterAlice))
+
+  let Just serverState4 = submitTurn now 1 gameId bobId serverState3
+      Just afterBob = getGame gameId serverState4
+  assertEqual "round advances after second submit" 2 (gameRoundNumber (runningState afterBob))
+  assertEqual "submission list resets after resolution" [] (runningSubmittedPlayers afterBob)
+  assertEqual "history records one resolved round" 1 (length (runningHistory afterBob))
+
+testResetAllGames :: IO ()
+testResetAllGames = do
+  let (gameId, _, serverState0) = createLobby "Alice" 2 0 Nothing initialServerState
+      Just (_, serverState1) = joinGame gameId "Bob" serverState0
+      resetState = resetAllGames serverState1
+  assertEqual "all games are cleared" [] (listGames resetState)
+  assertEqual "game ids reset" 1 (serverNextGameId resetState)
+  assertEqual "player ids reset" 1 (serverNextPlayerId resetState)
+
+testTimedRoundSubmission :: IO ()
+testTimedRoundSubmission = do
+  let now = fixedTime
+      later = addUTCTime 6 now
+      (gameId, aliceId, serverState0) = createLobby "Alice" 2 0 (Just 5) initialServerState
+      Just (_, serverState1) = joinGame gameId "Bob" serverState0
+      Just serverState2 = startGame now gameId serverState1
+      Just startedGame = getGame gameId serverState2
+  assertEqual "timer is attached to the round" (Just 5) (runningRoundTimeLimitSeconds startedGame)
+  assertBool "deadline is present for timed round" (runningRoundDeadline startedGame /= Nothing)
+
+  let Just serverState3 = submitTurn now 1 gameId aliceId serverState2
+      Just afterAlice = getGame gameId serverState3
+  assertEqual "one player can lock in before deadline" [aliceId] (runningSubmittedPlayers afterAlice)
+  assertEqual "round still waits before deadline" 1 (gameRoundNumber (runningState afterAlice))
+
+  let Just serverState4 = syncGame later gameId serverState3
+      Just afterDeadline = getGame gameId serverState4
+  assertEqual "deadline advances the round without the second submit" 2 (gameRoundNumber (runningState afterDeadline))
+  assertEqual "history records the auto-resolved round" 1 (length (runningHistory afterDeadline))
+  assertEqual "submission list resets after the timed resolution" [] (runningSubmittedPlayers afterDeadline)
+
 testAdvanceGameBy :: IO ()
 testAdvanceGameBy = do
   let config =
@@ -231,6 +377,18 @@ testAdvanceGameToEnd = do
         RunningGame
           { runningGameId = GameId 1,
             runningConfig = defaultConfig {configRoundGrantQuantity = 0},
+            runningSeatCount = 1,
+            runningHumanSeatCount = 0,
+            runningNpcCount = 1,
+            runningParticipants = [],
+            runningStarted = True,
+            runningRoundTimeLimitSeconds = Nothing,
+            runningRoundDeadline = Nothing,
+            runningSubmittedPlayers = [],
+            runningRoundPlans = Map.empty,
+            runningNextOrderId = 1,
+            runningLatestTicketLottery = Nothing,
+            runningTicketHistory = [],
             runningState =
               GameState
                 { gameRoundNumber = 1,
@@ -248,6 +406,7 @@ testAdvanceGameToEnd = do
       serverState0 =
         ServerState
           { serverNextGameId = 2,
+            serverNextPlayerId = 1,
             serverGames = Map.fromList [(GameId 1, runningGame)]
           }
       Just serverState1 = advanceGameToEnd (GameId 1) serverState0
@@ -272,12 +431,25 @@ testAdvanceGameToEndSafetyCap = do
         RunningGame
           { runningGameId = GameId 1,
             runningConfig = defaultConfig {configRoundGrantQuantity = 0},
+            runningSeatCount = 2,
+            runningHumanSeatCount = 0,
+            runningNpcCount = 2,
+            runningParticipants = [],
+            runningStarted = True,
+            runningRoundTimeLimitSeconds = Nothing,
+            runningRoundDeadline = Nothing,
+            runningSubmittedPlayers = [],
+            runningRoundPlans = Map.empty,
+            runningNextOrderId = 1,
+            runningLatestTicketLottery = Nothing,
+            runningTicketHistory = [],
             runningState = state0,
             runningHistory = []
           }
       serverState0 =
         ServerState
           { serverNextGameId = 2,
+            serverNextPlayerId = 1,
             serverGames = Map.fromList [(GameId 1, runningGame)]
           }
       Just serverState1 = advanceGameToEnd (GameId 1) serverState0
@@ -358,3 +530,6 @@ customState roundNumber seed players playerHoldings redemptionTable =
           gamePreviousReport = Nothing,
           gameWinner = Nothing
         }
+
+fixedTime :: UTCTime
+fixedTime = read "2026-04-21 12:00:00 UTC"

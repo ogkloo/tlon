@@ -6,13 +6,27 @@ import Tlon.Web.Server
 main :: IO ()
 main = do
   args <- getArgs
-  let port = parsePort args
-  putStrLn ("Starting tlon-web on http://127.0.0.1:" ++ show port)
-  runWebServer port
+  let options = parseOptions args
+  putStrLn ("Starting tlon-web on http://127.0.0.1:" ++ show (webPort options))
+  runWebServer (webPort options) (webDebug options)
 
-parsePort :: [String] -> Int
-parsePort args =
-  case args of
-    ["--port", rawPort] -> read rawPort
-    [rawPort] -> read rawPort
-    _ -> 8080
+data WebOptions = WebOptions
+  { webPort :: Int,
+    webDebug :: Bool
+  }
+
+parseOptions :: [String] -> WebOptions
+parseOptions =
+  go (WebOptions 8080 False)
+  where
+    go options args =
+      case args of
+        [] -> options
+        "--port" : rawPort : remaining ->
+          go options {webPort = read rawPort} remaining
+        "--debug" : remaining ->
+          go options {webDebug = True} remaining
+        [rawPort] ->
+          options {webPort = read rawPort}
+        _ : remaining ->
+          go options remaining

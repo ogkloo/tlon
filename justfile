@@ -16,12 +16,12 @@ agentation-build:
 cli:
   cabal run tlon
 
-web port="8080":
+web port="8080" debug="":
   npm run build:agentation
-  cabal run tlon-web -- --port {{port}}
+  cabal run tlon-web -- --port {{port}} {{debug}}
 
-web-watch port="8080":
-  watchexec -r --watch app --watch src --watch static --watch test --watch client --watch package.json --watch package-lock.json --watch tlon.cabal --watch flake.nix --exts hs,cabal,nix,md,js,jsx --ignore dist-newstyle --ignore node_modules -- sh -lc 'npm run build:agentation && cabal run tlon-web -- --port {{port}}'
+web-watch port="8080" debug="":
+  watchexec -r --watch app --watch src --watch test --watch client --watch package.json --watch package-lock.json --watch tlon.cabal --watch flake.nix --watch scripts --exts hs,cabal,nix,md,js,jsx,sh --ignore dist-newstyle --ignore node_modules -- ./scripts/run-web-watch.sh --port {{port}} {{debug}}
 
 test-watch:
   watchexec -r --exts hs,cabal,nix --ignore dist-newstyle -- just test
