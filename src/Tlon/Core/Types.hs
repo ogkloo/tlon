@@ -4,7 +4,11 @@ module Tlon.Core.Types (
     EntityId (..),
     EntityKind (..),
     Fill (..),
+    InstrumentSeries (..),
+    InstrumentSeriesKind (..),
     InvalidReason (..),
+    LotteryOffer (..),
+    LotteryPurchase (..),
     Market (..),
     MarketRule (..),
     MarketId (..),
@@ -13,9 +17,11 @@ module Tlon.Core.Types (
     OrderId (..),
     Price,
     Quantity,
+    SeriesId,
     Side (..),
     ValidatedOrder (..),
     allAbstractAssets,
+    assetSeriesId,
     isCurrencyAsset,
     isAbstractAsset,
 )
@@ -34,6 +40,8 @@ type Quantity = Int
 
 type Price = Int
 
+type SeriesId = String
+
 data AssetId
     = TLN001
     | TLN101
@@ -44,6 +52,9 @@ data AssetId
 allAbstractAssets :: [AssetId]
 allAbstractAssets = [TLN101, TLN102, TLN103]
 
+assetSeriesId :: AssetId -> SeriesId
+assetSeriesId = show
+
 isAbstractAsset :: AssetId -> Bool
 isAbstractAsset asset = asset `elem` allAbstractAssets
 
@@ -52,6 +63,37 @@ isCurrencyAsset asset =
     case asset of
         TLN001 -> True
         _ -> False
+
+data InstrumentSeriesKind
+    = BaseSeries
+    | LotteryTicketSeries
+    | RaffleTicketSeries
+    | DerivativeSeries
+    deriving (Eq, Show)
+
+data InstrumentSeries = InstrumentSeries
+    { instrumentSeriesId :: SeriesId
+    , instrumentSeriesAssetId :: AssetId
+    , instrumentSeriesKind :: InstrumentSeriesKind
+    , instrumentSeriesIssuer :: EntityId
+    }
+    deriving (Eq, Show)
+
+data LotteryOffer = LotteryOffer
+    { lotteryOfferAssetId :: AssetId
+    , lotteryOfferTicketPrice :: Quantity
+    , lotteryOfferOddsNumerator :: Int
+    , lotteryOfferOddsDenominator :: Int
+    , lotteryOfferPayoutQuantity :: Quantity
+    }
+    deriving (Eq, Show)
+
+data LotteryPurchase = LotteryPurchase
+    { lotteryPurchaseEntityId :: EntityId
+    , lotteryPurchaseAssetId :: AssetId
+    , lotteryPurchaseQuantity :: Quantity
+    }
+    deriving (Eq, Show)
 
 data EntityKind
     = GovernmentEntity

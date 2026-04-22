@@ -14,7 +14,7 @@ renderGameState state =
     [ "Tlon default game",
       "Round: " ++ show (gameRoundNumber state),
       "Winner: " ++ maybe "none" showEntityId (gameWinner state),
-      "Redemption table: " ++ renderRedemptionTable (gameRedemptionTable state),
+      "Lottery menu: " ++ renderLotteryMenu (gameLotteryMenu state),
       "Holdings:"
     ]
       ++ map renderEntityLine (Map.elems (gameEntities state))
@@ -30,9 +30,26 @@ renderGameState state =
 showEntityId :: EntityId -> String
 showEntityId = show
 
-renderRedemptionTable :: Map.Map AssetId Quantity -> String
-renderRedemptionTable table =
-  renderLedger table
+renderLotteryMenu :: [LotteryOffer] -> String
+renderLotteryMenu offers =
+  if null offers
+    then "[]"
+    else
+      "["
+        ++ List.intercalate ", " (map renderLotteryOffer offers)
+        ++ "]"
+
+renderLotteryOffer :: LotteryOffer -> String
+renderLotteryOffer offer =
+  show (lotteryOfferAssetId offer)
+    ++ " @ "
+    ++ show (lotteryOfferTicketPrice offer)
+    ++ " for "
+    ++ show (lotteryOfferOddsNumerator offer)
+    ++ "/"
+    ++ show (lotteryOfferOddsDenominator offer)
+    ++ " paying "
+    ++ show (lotteryOfferPayoutQuantity offer)
 
 renderLedger :: Map.Map AssetId Quantity -> String
 renderLedger ledger =

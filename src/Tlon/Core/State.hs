@@ -3,11 +3,14 @@ module Tlon.Core.State (
     GameState (..),
     Holdings,
     RoundInputs (..),
+    SeriesCatalog,
     adjustBalance,
+    assetIdForSeries,
     balanceOf,
     emptyLedger,
     findGovernmentId,
     livingMortals,
+    seriesForAsset,
     setEntityAlive,
 )
 where
@@ -21,15 +24,18 @@ type AssetLedger = Map AssetId Quantity
 
 type Holdings = Map EntityId AssetLedger
 
+type SeriesCatalog = Map SeriesId InstrumentSeries
+
 data GameState = GameState
     { gameRoundNumber :: Int
     , gameMatchingPolicy :: MatchingPolicy
     , gameSeed :: Int
     , gameEntities :: Map EntityId Entity
     , gameAssetIssuers :: Map AssetId EntityId
+    , gameSeriesCatalog :: SeriesCatalog
     , gameMarkets :: Map MarketId Market
     , gameHoldings :: Holdings
-    , gameRedemptionTable :: Map AssetId Quantity
+    , gameLotteryMenu :: [LotteryOffer]
     , gamePreviousReport :: Maybe RoundReport
     , gameWinner :: Maybe EntityId
     }
@@ -37,6 +43,7 @@ data GameState = GameState
 
 data RoundInputs = RoundInputs
     { roundOrders :: [Order]
+    , roundLotteryPurchases :: [LotteryPurchase]
     }
     deriving (Eq, Show)
 
@@ -59,6 +66,14 @@ adjustBalance entity asset delta holdings =
      in if Map.null newLedger
             then Map.delete entity holdings
             else Map.insert entity newLedger holdings
+
+seriesForAsset :: GameState -> AssetId -> Maybe InstrumentSeries
+seriesForAsset state assetId =
+    Map.lookup (assetSeriesId assetId) (gameSeriesCatalog state)
+
+assetIdForSeries :: GameState -> SeriesId -> Maybe AssetId
+assetIdForSeries state seriesId =
+    instrumentSeriesAssetId <$> Map.lookup seriesId (gameSeriesCatalog state)
 
 setEntityAlive :: EntityId -> Bool -> Map EntityId Entity -> Map EntityId Entity
 setEntityAlive entityId' aliveFlag =

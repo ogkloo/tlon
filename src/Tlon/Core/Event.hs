@@ -3,14 +3,12 @@ module Tlon.Core.Event
     GameEvent (..),
     Grant (..),
     InvalidOrder (..),
-    Redemption (..),
+    LotteryResult (..),
     RoundReport (..),
     SurvivalResult (..),
   )
 where
 
-import qualified Data.Map.Strict as Map
-import Data.Map.Strict (Map)
 import Tlon.Core.Types
 
 data InvalidOrder = InvalidOrder
@@ -26,11 +24,12 @@ data ExpiredOrder = ExpiredOrder
   }
   deriving (Eq, Show)
 
-data Redemption = Redemption
-  { redemptionEntityId :: EntityId,
-    redemptionAssetId :: AssetId,
-    redemptionQuantity :: Quantity,
-    redemptionPayout :: Quantity
+data LotteryResult = LotteryResult
+  { lotteryResultEntityId :: EntityId,
+    lotteryResultAssetId :: AssetId,
+    lotteryResultTicketCount :: Quantity,
+    lotteryResultWinCount :: Quantity,
+    lotteryResultPayoutQuantity :: Quantity
   }
   deriving (Eq, Show)
 
@@ -50,16 +49,17 @@ data Grant = Grant
 
 data RoundReport = RoundReport
   { reportRoundNumber :: Int,
-    reportRedemptionTable :: Map AssetId Quantity,
+    reportLotteryMenu :: [LotteryOffer],
     reportSubmittedOrders :: [Order],
+    reportLotteryPurchases :: [LotteryPurchase],
     reportInvalidOrders :: [InvalidOrder],
     reportFills :: [Fill],
     reportExpiredOrders :: [ExpiredOrder],
-    reportRedemptions :: [Redemption],
+    reportLotteryResults :: [LotteryResult],
     reportSurvivalResults :: [SurvivalResult],
     reportRefundRecipient :: Maybe EntityId,
     reportNextRoundGrants :: [Grant],
-    reportNextRedemptionTable :: Map AssetId Quantity
+    reportNextLotteryMenu :: [LotteryOffer]
   }
   deriving (Eq, Show)
 

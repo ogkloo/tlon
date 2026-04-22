@@ -3,7 +3,7 @@ module Tlon.Core.Engine (
 )
 where
 
-import qualified Data.List as List
+import qualified Data.Map.Strict as Map
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Tlon.Core.Event
@@ -16,12 +16,13 @@ import Tlon.Game.Default.Rules
 stepRound :: DefaultConfig -> RoundInputs -> GameState -> (GameState, [GameEvent])
 stepRound config inputs state =
     let submissions = roundOrders inputs
+        lotteryPurchases = roundLotteryPurchases inputs
         (validatedOrders, invalidOrders) = validateOrders state submissions
         fills = matchRound (gameMatchingPolicy state) validatedOrders
         expiredOrders = computeExpiredOrders validatedOrders fills
         settledState = state{gameHoldings = settleFills (gameHoldings state) fills}
-        (redeemedState, redemptions) = applyRedemptions settledState
-        (survivedState, survivalResults, refundRecipient) = applySurvival redeemedState
+        (lotteryState, lotteryResults) = applyLotteryPurchases lotteryPurchases settledState
+        (survivedState, survivalResults, refundRecipient) = applySurvival lotteryState
         winner = determineWinner survivedState
         nextRoundNumber = gameRoundNumber state + 1
         advancedState =
@@ -29,25 +30,26 @@ stepRound config inputs state =
                 { gameRoundNumber = nextRoundNumber
                 , gameWinner = winner
                 }
-        (finalState, grants, nextRedemptionTable) =
+        (finalState, grants, nextLotteryMenu) =
             case winner of
                 Nothing ->
                     let (grantedState, granted) = grantNextRoundTokens (configRoundGrantQuantity config) advancedState
-                     in (grantedState{gameRedemptionTable = redemptionForRound nextRoundNumber}, granted, redemptionForRound nextRoundNumber)
-                Just _ -> (advancedState, [], Map.empty)
+                     in (grantedState{gameLotteryMenu = lotteryMenuForRound nextRoundNumber}, granted, lotteryMenuForRound nextRoundNumber)
+                Just _ -> (advancedState{gameLotteryMenu = []}, [], [])
         report =
             RoundReport
                 { reportRoundNumber = gameRoundNumber state
-                , reportRedemptionTable = gameRedemptionTable state
+                , reportLotteryMenu = gameLotteryMenu state
                 , reportSubmittedOrders = submissions
+                , reportLotteryPurchases = lotteryPurchases
                 , reportInvalidOrders = invalidOrders
                 , reportFills = fills
                 , reportExpiredOrders = expiredOrders
-                , reportRedemptions = redemptions
+                , reportLotteryResults = lotteryResults
                 , reportSurvivalResults = survivalResults
                 , reportRefundRecipient = refundRecipient
                 , reportNextRoundGrants = grants
-                , reportNextRedemptionTable = nextRedemptionTable
+                , reportNextLotteryMenu = nextLotteryMenu
                 }
         stateWithReport = finalState{gamePreviousReport = Just report}
      in (stateWithReport, [RoundResolved report])

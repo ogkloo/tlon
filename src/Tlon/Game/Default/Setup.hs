@@ -24,6 +24,7 @@ initialState config =
                 , (TLN102, entityId government)
                 , (TLN103, entityId government)
                 ]
+        seriesCatalog = buildBaseSeriesCatalog assetIssuers
         market =
             Market
                 { marketId = MarketId 1
@@ -45,12 +46,27 @@ initialState config =
             , gameSeed = finalSeed
             , gameEntities = entitiesMap
             , gameAssetIssuers = assetIssuers
+            , gameSeriesCatalog = seriesCatalog
             , gameMarkets = Map.fromList [(marketId market, market)]
             , gameHoldings = holdings
-            , gameRedemptionTable = redemptionForRound roundNumber
+            , gameLotteryMenu = lotteryMenuForRound roundNumber
             , gamePreviousReport = Nothing
             , gameWinner = Nothing
             }
+
+buildBaseSeriesCatalog :: Map AssetId EntityId -> SeriesCatalog
+buildBaseSeriesCatalog assetIssuers =
+    Map.fromList
+        [ ( assetSeriesId assetId
+          , InstrumentSeries
+                { instrumentSeriesId = assetSeriesId assetId
+                , instrumentSeriesAssetId = assetId
+                , instrumentSeriesKind = BaseSeries
+                , instrumentSeriesIssuer = issuerId
+                }
+          )
+        | (assetId, issuerId) <- Map.toList assetIssuers
+        ]
 
 buildPlayers :: Int -> Int -> ([Entity], Int)
 buildPlayers count seed =

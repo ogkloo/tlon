@@ -25,7 +25,7 @@ gameJson runningGame =
             , "participants" .= map renderHumanPlayer (runningParticipants runningGame)
             , "roundNumber" .= gameRoundNumber state
             , "winner" .= fmap showEntityId (gameWinner state)
-            , "redemptionTable" .= map renderAssetQuantity (Map.toList (gameRedemptionTable state))
+            , "lotteryMenu" .= map renderLotteryOffer (gameLotteryMenu state)
             , "markets" .= map (renderMarket state) (Map.elems (gameMarkets state))
             , "entities" .= map (entitySummary state) (Map.elems (gameEntities state))
             ]
@@ -34,15 +34,17 @@ reportJson :: RoundReport -> Value
 reportJson report =
     object
         [ "roundNumber" .= reportRoundNumber report
+        , "lotteryMenu" .= map renderLotteryOffer (reportLotteryMenu report)
         , "submittedOrders" .= map renderOrder (reportSubmittedOrders report)
+        , "lotteryPurchases" .= map renderLotteryPurchase (reportLotteryPurchases report)
         , "invalidOrders" .= map renderInvalidOrder (reportInvalidOrders report)
         , "fills" .= map renderFill (reportFills report)
         , "expiredOrders" .= map renderExpiredOrder (reportExpiredOrders report)
-        , "redemptions" .= map renderRedemption (reportRedemptions report)
+        , "lotteryResults" .= map renderLotteryResult (reportLotteryResults report)
         , "survivalResults" .= map renderSurvivalResult (reportSurvivalResults report)
         , "refundRecipient" .= fmap showEntityId (reportRefundRecipient report)
         , "nextRoundGrants" .= map renderGrant (reportNextRoundGrants report)
-        , "nextRedemptionTable" .= map renderAssetQuantity (Map.toList (reportNextRedemptionTable report))
+        , "nextLotteryMenu" .= map renderLotteryOffer (reportNextLotteryMenu report)
         ]
 
 entitySummary :: GameState -> Entity -> Value
@@ -136,13 +138,32 @@ renderExpiredOrder expiredOrder =
         , "quantity" .= expiredQuantity expiredOrder
         ]
 
-renderRedemption :: Redemption -> Value
-renderRedemption redemption =
+renderLotteryOffer :: LotteryOffer -> Value
+renderLotteryOffer offer =
     object
-        [ "entityId" .= showEntityId (redemptionEntityId redemption)
-        , "assetId" .= show (redemptionAssetId redemption)
-        , "quantity" .= redemptionQuantity redemption
-        , "payout" .= redemptionPayout redemption
+        [ "assetId" .= show (lotteryOfferAssetId offer)
+        , "ticketPrice" .= lotteryOfferTicketPrice offer
+        , "oddsNumerator" .= lotteryOfferOddsNumerator offer
+        , "oddsDenominator" .= lotteryOfferOddsDenominator offer
+        , "payoutQuantity" .= lotteryOfferPayoutQuantity offer
+        ]
+
+renderLotteryPurchase :: LotteryPurchase -> Value
+renderLotteryPurchase purchase =
+    object
+        [ "entityId" .= showEntityId (lotteryPurchaseEntityId purchase)
+        , "assetId" .= show (lotteryPurchaseAssetId purchase)
+        , "quantity" .= lotteryPurchaseQuantity purchase
+        ]
+
+renderLotteryResult :: LotteryResult -> Value
+renderLotteryResult result =
+    object
+        [ "entityId" .= showEntityId (lotteryResultEntityId result)
+        , "assetId" .= show (lotteryResultAssetId result)
+        , "ticketCount" .= lotteryResultTicketCount result
+        , "winCount" .= lotteryResultWinCount result
+        , "payoutQuantity" .= lotteryResultPayoutQuantity result
         ]
 
 renderSurvivalResult :: SurvivalResult -> Value

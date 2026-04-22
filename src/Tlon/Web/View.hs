@@ -146,8 +146,8 @@ renderGameShell debugEnabled runningGame maybePlayer maybeSecondsRemaining =
                             h2_ "Markets"
                             marketsPanel runningGame maybePlayer
                         div_ [class_ "panel"] $ do
-                            h2_ "Redemption"
-                            holdingsTable (Map.toList (gameRedemptionTable state))
+                            h2_ "Lottery Menu"
+                            lotteryMenuPanel state
                         div_ [class_ "panel"] $ do
                             h2_ "Overview"
                             overviewList runningGame
@@ -173,8 +173,10 @@ renderGameShell debugEnabled runningGame maybePlayer maybeSecondsRemaining =
                 section_ [class_ "band"] $ do
                     div_ [class_ "wrap section-stack"] $ do
                         div_ [class_ "panel"] $ do
-                            h2_ "Ticket Lottery"
-                            maybe (p_ "No ticket purchases last round.") renderTicketLotterySummary (runningLatestTicketLottery runningGame)
+                            h2_ "Lottery Results"
+                            case gamePreviousReport state of
+                                Nothing -> p_ "No lottery results last round."
+                                Just report -> renderLotteryResultsSummary report
                         div_ [class_ "panel"] $ do
                             h2_ "History"
                             historyList (runningHistory runningGame)
@@ -567,7 +569,7 @@ playerActionsPanel runningGame participant =
                         $ div_ [class_ "inline-fieldset compact"]
                         $ do
                             label_ [class_ "control-label"] $ do
-                                span_ "Lottery Tickets"
+                                span_ (toHtml (lotteryInputLabel (runningState runningGame)))
                                 input_ [type_ "number", name_ "ticketCount", min_ "0", value_ (Text.pack (show (planTicketCount plan)))]
                             button_ [type_ "submit"] "Set Tickets"
                 else p_ "Your plan is locked for this round."
@@ -827,7 +829,8 @@ renderReportSummary report = do
         li_ ("Invalid orders: " <> toHtml (show (length (reportInvalidOrders report))))
         li_ ("Fills: " <> toHtml (show (length (reportFills report))))
         li_ ("Expirations: " <> toHtml (show (length (reportExpiredOrders report))))
-        li_ ("Redemptions: " <> toHtml (show (length (reportRedemptions report))))
+        li_ ("Lottery purchases: " <> toHtml (show (length (reportLotteryPurchases report))))
+        li_ ("Lottery results: " <> toHtml (show (length (reportLotteryResults report))))
         li_ ("Refund recipient: " <> toHtml (fromMaybe "none" (fmap showEntityId reportRefundRecipient')))
   where
     reportRefundRecipient' = reportRefundRecipient report
@@ -846,24 +849,64 @@ historyList reports =
                                 <> ": "
                                 <> toHtml (show (length (reportFills report)))
                                 <> " fills, "
-                                <> toHtml (show (length (reportRedemptions report)))
-                                <> " redemptions"
+                                <> toHtml (show (length (reportLotteryResults report)))
+                                <> " lottery results"
                     )
                     (reverse reports)
 
-renderTicketLotterySummary :: TicketLotteryResult -> Html ()
-renderTicketLotterySummary result = do
-    p_ ("Round " <> toHtml (show (ticketLotteryRoundNumber result)))
-    ul_ [class_ "compact-list"] $ do
-        li_ ("Tickets bought: " <> toHtml (show (sum (map snd (ticketLotteryPurchases result)))))
-        li_ ("Buyers: " <> toHtml (show (length (ticketLotteryPurchases result))))
-        li_ $
-            "Winner: "
-                <> toHtml
-                    ( case ticketLotteryWinner result of
-                        Nothing -> "none"
-                        Just entityId' -> showEntityId entityId'
-                    )
+renderLotteryResultsSummary :: RoundReport -> Html ()
+renderLotteryResultsSummary report =
+    if null (reportLotteryResults report)
+        then p_ "No lottery purchases last round."
+        else do
+            p_ ("Round " <> toHtml (show (reportRoundNumber report)))
+            ul_ [class_ "compact-list"] $
+                mapM_ renderLotteryResultLine (reportLotteryResults report)
+
+renderLotteryResultLine :: LotteryResult -> Html ()
+renderLotteryResultLine result =
+    li_ $
+        toHtml (showEntityId (lotteryResultEntityId result))
+            <> ": "
+            <> toHtml (show (lotteryResultTicketCount result))
+            <> " tickets on "
+            <> toHtml (show (lotteryResultAssetId result))
+            <> ", "
+            <> toHtml (show (lotteryResultWinCount result))
+            <> " wins, payout "
+            <> toHtml (show (lotteryResultPayoutQuantity result))
+
+lotteryMenuPanel :: GameState -> Html ()
+lotteryMenuPanel state =
+    if null (gameLotteryMenu state)
+        then p_ "No lottery offers are available."
+        else ul_ [class_ "compact-list"] $ mapM_ renderLotteryOfferLine (gameLotteryMenu state)
+
+renderLotteryOfferLine :: LotteryOffer -> Html ()
+renderLotteryOfferLine offer =
+    li_ $
+        toHtml (show (lotteryOfferAssetId offer))
+            <> ": pay "
+            <> toHtml (show (lotteryOfferTicketPrice offer))
+            <> " TLN001 for "
+            <> toHtml (show (lotteryOfferOddsNumerator offer))
+            <> "/"
+            <> toHtml (show (lotteryOfferOddsDenominator offer))
+            <> " odds of "
+            <> toHtml (show (lotteryOfferPayoutQuantity offer))
+            <> " "
+            <> toHtml (show (lotteryOfferAssetId offer))
+
+lotteryInputLabel :: GameState -> String
+lotteryInputLabel state =
+    case gameLotteryMenu state of
+        offer : _ ->
+            "Tickets for "
+                ++ show (lotteryOfferAssetId offer)
+                ++ " ("
+                ++ show (lotteryOfferTicketPrice offer)
+                ++ " TLN001 each)"
+        [] -> "Lottery Tickets"
 
 winnerLabel :: Maybe EntityId -> Html ()
 winnerLabel maybeWinner =

@@ -7,7 +7,6 @@ module Tlon.Web.State (
     PlayerRoundPlan (..),
     RunningGame (..),
     ServerState (..),
-    TicketLotteryResult (..),
     advanceGameBy,
     advanceGameToEnd,
     advanceGameToRound,
@@ -42,11 +41,10 @@ import Data.List (dropWhileEnd, find, foldl', nub)
 import qualified Data.List as List
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (isJust, maybeToList)
+import Data.Maybe (isJust)
 import Data.Time.Clock (NominalDiffTime, UTCTime, addUTCTime, diffUTCTime)
 import Tlon.Core.Engine
 import Tlon.Core.Event
-import Tlon.Core.Rng
 import Tlon.Core.State
 import Tlon.Core.Types
 import Tlon.Game.Default.Config
@@ -71,13 +69,6 @@ data PlayerRoundPlan = PlayerRoundPlan
     }
     deriving (Eq, Show)
 
-data TicketLotteryResult = TicketLotteryResult
-    { ticketLotteryRoundNumber :: Int
-    , ticketLotteryPurchases :: [(EntityId, Int)]
-    , ticketLotteryWinner :: Maybe EntityId
-    }
-    deriving (Eq, Show)
-
 data RunningGame = RunningGame
     { runningGameId :: GameId
     , runningConfig :: DefaultConfig
@@ -91,8 +82,6 @@ data RunningGame = RunningGame
     , runningSubmittedPlayers :: [PlayerId]
     , runningRoundPlans :: Map PlayerId PlayerRoundPlan
     , runningNextOrderId :: Int
-    , runningLatestTicketLottery :: Maybe TicketLotteryResult
-    , runningTicketHistory :: [TicketLotteryResult]
     , runningState :: GameState
     , runningHistory :: [RoundReport]
     }
@@ -141,8 +130,6 @@ createGame config serverState =
                 , runningSubmittedPlayers = []
                 , runningRoundPlans = Map.empty
                 , runningNextOrderId = 1
-                , runningLatestTicketLottery = Nothing
-                , runningTicketHistory = []
                 , runningState = initialState config'
                 , runningHistory = []
                 }
@@ -186,8 +173,6 @@ createLobby rawName requestedHumanSeats requestedNpcCount maybeRoundTimeLimit se
                 , runningSubmittedPlayers = []
                 , runningRoundPlans = Map.empty
                 , runningNextOrderId = 1
-                , runningLatestTicketLottery = Nothing
-                , runningTicketHistory = []
                 , runningState = initialState config'
                 , runningHistory = []
                 }
@@ -292,7 +277,11 @@ setTicketCount gameId playerId requestedCount serverState = do
         else do
             entityId' <- humanPlayerEntityId participant
             let currentPlan = getPlayerPlan playerId runningGame
-                maxTickets = balanceOf (gameHoldings (runningState runningGame)) entityId' TLN001
+                ticketPrice = currentTicketPrice (runningState runningGame)
+                maxTickets =
+                    if ticketPrice <= 0
+                        then 0
+                        else balanceOf (gameHoldings (runningState runningGame)) entityId' TLN001 `div` ticketPrice
                 normalizedCount = max 0 (min requestedCount maxTickets)
                 updatedPlan = currentPlan{planTicketCount = normalizedCount}
                 updatedGame =
@@ -379,8 +368,6 @@ resetGame now gameId serverState = do
                         , runningHistory = []
                         , runningSubmittedPlayers = []
                         , runningRoundPlans = Map.empty
-                        , runningLatestTicketLottery = Nothing
-                        , runningTicketHistory = []
                         , runningRoundDeadline = Nothing
                         , runningNextOrderId = 1
                         }
@@ -517,8 +504,6 @@ startRunningGame now runningGame =
                 , runningHistory = []
                 , runningSubmittedPlayers = []
                 , runningRoundPlans = Map.empty
-                , runningLatestTicketLottery = Nothing
-                , runningTicketHistory = []
                 , runningNextOrderId = 1
                 }
      in resetRoundWindow now startedGame
@@ -590,23 +575,21 @@ stepRunningGameAt now runningGame
     | isJust (gameWinner (runningState runningGame)) = runningGame
     | otherwise =
         let submittedOrders = concatMap (planOrders . (`getPlayerPlan` runningGame)) (runningSubmittedPlayers runningGame)
-            submittedTickets = collectSubmittedTickets runningGame
-            (preStepState, maybeTicketResult) = applyTicketLottery submittedTickets (runningState runningGame)
-            (state', events) = stepRound (runningConfig runningGame) (RoundInputs submittedOrders) preStepState
+            submittedPurchases = collectSubmittedPurchases runningGame
+            (state', events) = stepRound (runningConfig runningGame) (RoundInputs submittedOrders submittedPurchases) (runningState runningGame)
             reports = [report | RoundResolved report <- events]
             resolvedGame =
                 runningGame
                     { runningState = state'
                     , runningHistory = runningHistory runningGame ++ reports
-                    , runningLatestTicketLottery = maybeTicketResult
-                    , runningTicketHistory = runningTicketHistory runningGame ++ maybeToList maybeTicketResult
                     }
          in resetRoundWindow now resolvedGame
 
-collectSubmittedTickets :: RunningGame -> [(EntityId, Int)]
-collectSubmittedTickets runningGame =
+collectSubmittedPurchases :: RunningGame -> [LotteryPurchase]
+collectSubmittedPurchases runningGame =
     foldr collectOne [] (runningSubmittedPlayers runningGame)
   where
+    currentAsset = currentLotteryAsset (runningState runningGame)
     collectOne playerId acc =
         case getPlayer playerId runningGame >>= humanPlayerEntityId of
             Nothing -> acc
@@ -614,53 +597,7 @@ collectSubmittedTickets runningGame =
                 let ticketCount = planTicketCount (getPlayerPlan playerId runningGame)
                  in if ticketCount <= 0
                         then acc
-                        else (entityId', ticketCount) : acc
-
-applyTicketLottery :: [(EntityId, Int)] -> GameState -> (GameState, Maybe TicketLotteryResult)
-applyTicketLottery purchases state =
-    let normalizedPurchases = filter (\(_, count) -> count > 0) purchases
-     in case normalizedPurchases of
-            [] -> (state, Nothing)
-            _ ->
-                let governmentId = findGovernmentId state
-                    holdingsAfterPurchases =
-                        foldl'
-                            ( \holdings (entityId', count) ->
-                                adjustBalance governmentId TLN001 count
-                                    . adjustBalance entityId' TLN001 (negate count)
-                                    $ holdings
-                            )
-                            (gameHoldings state)
-                            normalizedPurchases
-                    entries =
-                        concatMap
-                            (\(entityId', count) -> replicate count entityId')
-                            normalizedPurchases
-                    (winner, seed') =
-                        case entries of
-                            [] -> (Nothing, gameSeed state)
-                            _ ->
-                                let (selectedEntity, nextSeed') = drawFromList entries (gameSeed state)
-                                 in (Just selectedEntity, nextSeed')
-                    holdingsAfterRefund =
-                        case winner of
-                            Nothing -> holdingsAfterPurchases
-                            Just winnerId ->
-                                adjustBalance governmentId TLN001 (-1)
-                                    . adjustBalance winnerId TLN001 1
-                                    $ holdingsAfterPurchases
-                    updatedState =
-                        state
-                            { gameHoldings = holdingsAfterRefund
-                            , gameSeed = seed'
-                            }
-                    result =
-                        TicketLotteryResult
-                            { ticketLotteryRoundNumber = gameRoundNumber state
-                            , ticketLotteryPurchases = normalizedPurchases
-                            , ticketLotteryWinner = winner
-                            }
-                 in (updatedState, Just result)
+                        else LotteryPurchase entityId' currentAsset ticketCount : acc
 
 iterateGameSteps :: Int -> RunningGame -> RunningGame
 iterateGameSteps stepCount runningGame
@@ -679,6 +616,18 @@ iterateUntilWinner remainingSteps runningGame
     | remainingSteps <= 0 = runningGame
     | isJust (gameWinner (runningState runningGame)) = runningGame
     | otherwise = iterateUntilWinner (remainingSteps - 1) (stepRunningGameAt noDeadlineTick runningGame)
+
+currentLotteryAsset :: GameState -> AssetId
+currentLotteryAsset state =
+    case gameLotteryMenu state of
+        offer : _ -> lotteryOfferAssetId offer
+        [] -> TLN101
+
+currentTicketPrice :: GameState -> Int
+currentTicketPrice state =
+    case gameLotteryMenu state of
+        offer : _ -> lotteryOfferTicketPrice offer
+        [] -> 1
 
 noDeadlineTick :: UTCTime
 noDeadlineTick = read "1970-01-01 00:00:00 UTC"

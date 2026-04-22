@@ -192,19 +192,71 @@ Visible after resolution:
 - survival stake results
 - the lottery refund result
 
-### Government Redemption
+### Instrument-Series Redesign Plan
 
-At the start of each round, Government publishes a redemption table giving the number of `TLN-001` tokens paid for each abstract token.
+The current implementation still treats tradable things primarily as a small closed set of assets and treats lottery participation as a round action. That is not the long-term shape. The intended redesign is to move the core model toward first-class instrument series and positions.
 
-Example:
+The governing distinction is between instrument definition and position:
 
-- `TLN-101 -> 1 TLN-001`
-- `TLN-102 -> 2 TLN-001`
-- `TLN-103 -> 0 TLN-001`
+- an _instrument series_ defines what a tradable thing is, who issued it, how it settles, and whether it expires
+- a _position_ records how much of a given series an entity holds
 
-These values may vary from round to round according to a deterministic seeded process or a predefined schedule.
+Under this model:
 
-Redemption is a separate settlement phase in v1, not an ordinary order-book interaction. This keeps player-to-player trading distinct from the Government's role as issuer and redeemer.
+- `TLN-001`, `TLN-101`, `TLN-102`, and `TLN-103` are base instrument series
+- lottery tickets are per-round issued instrument series with explicit settlement terms
+- raffle tickets are also instrument series, differing mainly in how their settlement draw is defined
+- later derivatives should also be modeled as issued instrument series rather than as ad hoc side systems
+
+The redesign should be staged.
+
+#### Phase 1: core identity split with no behavior change
+
+Introduce a series registry in core state and begin separating `AssetId` from the more general notion of a tradable series.
+
+Goals:
+
+- add a `SeriesId`-like identifier and a catalog of series metadata
+- keep current behavior unchanged
+- keep holdings, orders, fills, grants, and reports economically identical while moving the core vocabulary away from a closed asset enum
+- keep the web layer mostly stable by treating it as an adapter over the old names
+
+At the end of this phase, the engine should still behave exactly as it does now, but the core model should have a place to represent dynamic issued series.
+
+#### Phase 2: ticket series as real positions
+
+Replace immediate lottery resolution with ticket issuance.
+
+Goals:
+
+- reinterpret the lottery menu as a primary issuance menu for ticket series
+- have purchases mint transferable ticket positions rather than resolve immediately
+- settle matured ticket positions in a later settlement step
+- preserve the existing web flow temporarily by allowing the web layer to continue submitting simple ticket counts against the currently offered series
+
+This is the phase where lottery tickets become real bearer-like positions in the ledger.
+
+#### Phase 3: unify raffles with ticket settlement
+
+Move the survival/refund path onto the same substrate.
+
+Goals:
+
+- model raffle participation as issued short-lived series rather than as a dedicated side rule
+- express both lotteries and raffles as different settlement rules over held series
+- remove the last special-case distinction between “round action” and “held claim”
+
+#### Later phase: derivatives on top of series
+
+Once markets, positions, and settlements all point at first-class series, derivatives become additive rather than architectural.
+
+Goals:
+
+- allow issued series to reference other series as underlyings
+- preserve fungibility at the series level
+- keep obligations, margin, and settlement logic separate from the position ledger where necessary
+
+The key design commitment is that tickets should be fungible series, not individually tracked serial-numbered objects. They should behave as transferable bearer-like claims represented by positions in issued series.
 
 ### Survival Rule
 

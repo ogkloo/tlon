@@ -4,12 +4,27 @@ import qualified Data.Map.Strict as Map
 import Data.Time.Clock (UTCTime, addUTCTime)
 import System.Exit (exitFailure)
 import Tlon
+import Tlon.Game.Default.Rules (lotteryMenuForRound)
+
+baseSeriesCatalog :: Map.Map SeriesId InstrumentSeries
+baseSeriesCatalog =
+    Map.fromList
+        [ ( assetSeriesId assetId
+          , InstrumentSeries
+                { instrumentSeriesId = assetSeriesId assetId
+                , instrumentSeriesAssetId = assetId
+                , instrumentSeriesKind = BaseSeries
+                , instrumentSeriesIssuer = EntityId 0
+                }
+          )
+        | assetId <- [TLN001, TLN101, TLN102, TLN103]
+        ]
 
 main :: IO ()
 main = do
     runTest "price-time matching supports partial fills" testPriceTimeMatching
     runTest "round rejects over-reserved inventory" testReserveValidation
-    runTest "round settles fills then redeems and advances the table" testRoundSettlementAndRedemption
+    runTest "round settles fills and resolves lottery purchases" testRoundSettlementAndLottery
     runTest
         "unfilled remainder expires and grants are published for next round"
         testExpiryAndGrantReporting
@@ -123,7 +138,7 @@ testReserveValidation = do
         order1 = Order (OrderId 1) player1 (MarketId 1) Buy TLN101 TLN001 2 2
         order2 = Order (OrderId 2) player1 (MarketId 1) Buy TLN102 TLN001 2 2
         order3 = Order (OrderId 3) player2 (MarketId 1) Sell TLN101 TLN001 1 2
-        (_, events) = stepRound config (RoundInputs [order1, order2, order3]) state1
+        (_, events) = stepRound config (RoundInputs [order1, order2, order3] []) state1
         report = roundReportFrom events
     assertEqual "one order invalidated by reservation" 1 (length (reportInvalidOrders report))
     case reportInvalidOrders report of
@@ -133,8 +148,8 @@ testReserveValidation = do
             putStrLn "FAILED: expected exactly one invalid order"
             exitFailure
 
-testRoundSettlementAndRedemption :: IO ()
-testRoundSettlementAndRedemption = do
+testRoundSettlementAndLottery :: IO ()
+testRoundSettlementAndLottery = do
     let config =
             defaultConfig
                 { configPlayerCount = 2
@@ -146,35 +161,38 @@ testRoundSettlementAndRedemption = do
         seller = Entity (EntityId 1) "Seller-1" PlayerEntity True
         buyer = Entity (EntityId 2) "Buyer-2" PlayerEntity True
         state0 =
-            customState
+            ( customState
                 1
                 17
                 [seller, buyer]
                 [ (entityId seller, [(TLN001, 1), (TLN101, 2)])
                 , (entityId buyer, [(TLN001, 5)])
                 ]
-                (Map.fromList [(TLN101, 1), (TLN102, 2), (TLN103, 0)])
+            )
+                { gameSeed = 1
+                , gameLotteryMenu = [LotteryOffer TLN101 1 1 1 1]
+                }
         orders =
             [ Order (OrderId 1) (entityId seller) (MarketId 1) Sell TLN101 TLN001 2 2
             , Order (OrderId 2) (entityId buyer) (MarketId 1) Buy TLN101 TLN001 1 2
             ]
-        (state1, events) = stepRound config (RoundInputs orders) state0
+        purchases = [LotteryPurchase (entityId buyer) TLN101 2]
+        (state1, events) = stepRound config (RoundInputs orders purchases) state0
         report = roundReportFrom events
         governmentId = EntityId 0
     assertEqual "one fill in the round" 1 (length (reportFills report))
     assertEqual "one expired seller remainder" [ExpiredOrder (OrderId 1) (entityId seller) 1] (reportExpiredOrders report)
+    assertEqual "lottery purchase is reported" purchases (reportLotteryPurchases report)
     assertEqual
-        "both players redeem TLN101 after settlement"
-        [ Redemption (entityId seller) TLN101 1 1
-        , Redemption (entityId buyer) TLN101 1 1
-        ]
-        (reportRedemptions report)
+        "buyer lottery resolves against published odds"
+        [LotteryResult (entityId buyer) TLN101 2 2 2]
+        (reportLotteryResults report)
     assertEqual "round advances" 2 (gameRoundNumber state1)
-    assertEqual "next round redemption table advances" (Map.fromList [(TLN101, 0), (TLN102, 1), (TLN103, 2)]) (gameRedemptionTable state1)
-    assertEqual "seller keeps trade proceeds, redemption, and refund" 4 (balanceOf (gameHoldings state1) (entityId seller) TLN001)
-    assertEqual "buyer spends two, redeems one, then pays stake" 3 (balanceOf (gameHoldings state1) (entityId buyer) TLN001)
-    assertEqual "government quote balance reflects redemptions and survival net" 99 (balanceOf (gameHoldings state1) governmentId TLN001)
-    assertEqual "buyer received one TLN101 then redeemed it" 0 (balanceOf (gameHoldings state1) (entityId buyer) TLN101)
+    assertEqual "next round lottery menu advances" (lotteryMenuForRound 2) (gameLotteryMenu state1)
+    assertEqual "seller keeps trade proceeds then pays stake" 2 (balanceOf (gameHoldings state1) (entityId seller) TLN001)
+    assertEqual "buyer spends on trade and lottery, then gets the refund" 1 (balanceOf (gameHoldings state1) (entityId buyer) TLN001)
+    assertEqual "government quote balance reflects lottery sales and survival net" 103 (balanceOf (gameHoldings state1) governmentId TLN001)
+    assertEqual "buyer keeps traded inventory and lottery payout" 3 (balanceOf (gameHoldings state1) (entityId buyer) TLN101)
 
 testExpiryAndGrantReporting :: IO ()
 testExpiryAndGrantReporting = do
@@ -196,17 +214,16 @@ testExpiryAndGrantReporting = do
                 [ (entityId player1, [(TLN001, 2), (TLN101, 1)])
                 , (entityId player2, [(TLN001, 2)])
                 ]
-                (Map.fromList [(TLN101, 0), (TLN102, 1), (TLN103, 2)])
         order = Order (OrderId 1) (entityId player1) (MarketId 1) Sell TLN101 TLN001 1 2
-        (state1, events) = stepRound config (RoundInputs [order]) state0
+        (state1, events) = stepRound config (RoundInputs [order] []) state0
         report = roundReportFrom events
         surviving = livingMortals state1
     assertEqual "unmatched sell order expires" [ExpiredOrder (OrderId 1) (entityId player1) 1] (reportExpiredOrders report)
     assertEqual "no fills occurred" [] (reportFills report)
     assertEqual "both mortals survive" [entityId player1, entityId player2] surviving
     assertEqual "one grant per surviving mortal" 2 (length (reportNextRoundGrants report))
-    assertEqual "reported next redemption table matches state" (reportNextRedemptionTable report) (gameRedemptionTable state1)
-    assertEqual "grants are actually reflected in holdings" 2 (sum [balanceOf (gameHoldings state1) entityId' TLN101 + balanceOf (gameHoldings state1) entityId' TLN102 + balanceOf (gameHoldings state1) entityId' TLN103 | entityId' <- surviving])
+    assertEqual "reported next lottery menu matches state" (reportNextLotteryMenu report) (gameLotteryMenu state1)
+    assertEqual "grants are actually reflected in holdings" 3 (sum [balanceOf (gameHoldings state1) entityId' TLN101 + balanceOf (gameHoldings state1) entityId' TLN102 + balanceOf (gameHoldings state1) entityId' TLN103 | entityId' <- surviving])
 
 testOpposingSideRejection :: IO ()
 testOpposingSideRejection = do
@@ -221,7 +238,7 @@ testOpposingSideRejection = do
         state0 = (initialState config){gameHoldings = adjustBalance (EntityId 1) TLN101 1 (gameHoldings (initialState config))}
         order1 = Order (OrderId 1) (EntityId 1) (MarketId 1) Buy TLN101 TLN001 1 2
         order2 = Order (OrderId 2) (EntityId 1) (MarketId 1) Sell TLN101 TLN001 1 2
-        (_, events) = stepRound config (RoundInputs [order1, order2]) state0
+        (_, events) = stepRound config (RoundInputs [order1, order2] []) state0
         report = roundReportFrom events
     case reportInvalidOrders report of
         [invalidOrder] ->
@@ -259,19 +276,20 @@ testGovernmentMarketRule = do
                 , gameEntities = Map.fromList [(EntityId 0, government), (EntityId 1, seller), (EntityId 2, buyer)]
                 , gameAssetIssuers = Map.fromList [(TLN001, EntityId 0), (TLN101, EntityId 0), (TLN102, EntityId 0), (TLN103, EntityId 0)]
                 , gameMarkets = Map.fromList [(MarketId 1, market)]
+                , gameSeriesCatalog = baseSeriesCatalog
                 , gameHoldings =
                     Map.fromList
                         [ (EntityId 0, Map.fromList [(TLN001, 100), (TLN101, 100), (TLN102, 100), (TLN103, 100)])
                         , (EntityId 1, Map.fromList [(TLN101, 1)])
                         , (EntityId 2, Map.fromList [(TLN102, 5)])
                         ]
-                , gameRedemptionTable = Map.fromList [(TLN101, 0), (TLN102, 0), (TLN103, 0)]
+                , gameLotteryMenu = lotteryMenuForRound 1
                 , gamePreviousReport = Nothing
                 , gameWinner = Nothing
                 }
         sellOrder = Order (OrderId 1) (EntityId 1) (MarketId 1) Sell TLN101 TLN102 1 2
         buyOrder = Order (OrderId 2) (EntityId 2) (MarketId 1) Buy TLN101 TLN102 1 2
-        (_, events) = stepRound config (RoundInputs [sellOrder, buyOrder]) state0
+        (_, events) = stepRound config (RoundInputs [sellOrder, buyOrder] []) state0
         report = roundReportFrom events
     assertEqual "orders violating the market rule are rejected" 2 (length (reportInvalidOrders report))
     assertEqual "no fills execute when denomination rule is violated" [] (reportFills report)
@@ -377,13 +395,8 @@ testSubmittedActionsResolve = do
     assertEqual "round advances after submitted actions resolve" 2 (gameRoundNumber (runningState runningGame))
     assertEqual "submitted staged orders reach the report" 2 (length (reportSubmittedOrders report))
     assertEqual "the staged match fills" 1 (length (reportFills report))
-    assertBool "ticket lottery result is recorded" (runningLatestTicketLottery runningGame /= Nothing)
-    case runningLatestTicketLottery runningGame of
-        Just ticketResult ->
-            assertEqual "one ticket purchase recorded" [(EntityId 1, 1)] (ticketLotteryPurchases ticketResult)
-        Nothing -> do
-            putStrLn "FAILED: expected a ticket lottery result"
-            exitFailure
+    assertEqual "one lottery purchase recorded" [LotteryPurchase (EntityId 1) TLN101 1] (reportLotteryPurchases report)
+    assertEqual "one lottery result recorded" [LotteryResult (EntityId 1) TLN101 1 0 0] (reportLotteryResults report)
 
 testManualRoundSubmission :: IO ()
 testManualRoundSubmission = do
@@ -490,8 +503,6 @@ testAdvanceGameToEnd = do
                 , runningSubmittedPlayers = []
                 , runningRoundPlans = Map.empty
                 , runningNextOrderId = 1
-                , runningLatestTicketLottery = Nothing
-                , runningTicketHistory = []
                 , runningState =
                     GameState
                         { gameRoundNumber = 1
@@ -499,9 +510,10 @@ testAdvanceGameToEnd = do
                         , gameSeed = 3
                         , gameEntities = Map.fromList [(EntityId 0, government), (EntityId 1, player)]
                         , gameAssetIssuers = Map.fromList [(TLN001, EntityId 0), (TLN101, EntityId 0), (TLN102, EntityId 0), (TLN103, EntityId 0)]
+                        , gameSeriesCatalog = baseSeriesCatalog
                         , gameMarkets = Map.fromList [(MarketId 1, market)]
                         , gameHoldings = Map.fromList [(EntityId 0, Map.fromList [(TLN001, 100)]), (EntityId 1, Map.empty)]
-                        , gameRedemptionTable = Map.fromList [(TLN101, 0), (TLN102, 0), (TLN103, 0)]
+                        , gameLotteryMenu = lotteryMenuForRound 1
                         , gamePreviousReport = Nothing
                         , gameWinner = Nothing
                         }
@@ -530,7 +542,6 @@ testAdvanceGameToEndSafetyCap = do
                 [ (entityId player1, [(TLN001, 20000)])
                 , (entityId player2, [(TLN001, 20000)])
                 ]
-                (Map.fromList [(TLN101, 0), (TLN102, 0), (TLN103, 0)])
         runningGame =
             RunningGame
                 { runningGameId = GameId 1
@@ -545,8 +556,6 @@ testAdvanceGameToEndSafetyCap = do
                 , runningSubmittedPlayers = []
                 , runningRoundPlans = Map.empty
                 , runningNextOrderId = 1
-                , runningLatestTicketLottery = Nothing
-                , runningTicketHistory = []
                 , runningState = state0
                 , runningHistory = []
                 }
@@ -589,12 +598,13 @@ testGovernmentWin = do
                 , gameEntities = Map.fromList [(EntityId 0, government), (EntityId 1, player1), (EntityId 2, player2)]
                 , gameAssetIssuers = Map.fromList [(TLN001, EntityId 0), (TLN101, EntityId 0), (TLN102, EntityId 0), (TLN103, EntityId 0)]
                 , gameMarkets = Map.fromList [(MarketId 1, market)]
+                , gameSeriesCatalog = baseSeriesCatalog
                 , gameHoldings = holdings
-                , gameRedemptionTable = Map.fromList [(TLN101, 0), (TLN102, 0), (TLN103, 0)]
+                , gameLotteryMenu = lotteryMenuForRound 1
                 , gamePreviousReport = Nothing
                 , gameWinner = Nothing
                 }
-        (state1, _) = stepRound defaultConfig{configRoundGrantQuantity = 0} (RoundInputs []) state0
+        (state1, _) = stepRound defaultConfig{configRoundGrantQuantity = 0} (RoundInputs [] []) state0
     assertEqual "government wins when no mortal can survive" (Just (EntityId 0)) (gameWinner state1)
     assertBool "player one eliminated" (not (entityAlive (gameEntities state1 Map.! EntityId 1)))
     assertBool "player two eliminated" (not (entityAlive (gameEntities state1 Map.! EntityId 2)))
@@ -605,8 +615,8 @@ roundReportFrom events =
         [RoundResolved report] -> report
         _ -> error "Expected a single round report."
 
-customState :: Int -> Int -> [Entity] -> [(EntityId, [(AssetId, Quantity)])] -> Map.Map AssetId Quantity -> GameState
-customState roundNumber seed players playerHoldings redemptionTable =
+customState :: Int -> Int -> [Entity] -> [(EntityId, [(AssetId, Quantity)])] -> GameState
+customState roundNumber seed players playerHoldings =
     let government = Entity (EntityId 0) "Government" GovernmentEntity True
         market =
             Market
@@ -632,9 +642,10 @@ customState roundNumber seed players playerHoldings redemptionTable =
             , gameSeed = seed
             , gameEntities = entities
             , gameAssetIssuers = Map.fromList [(TLN001, EntityId 0), (TLN101, EntityId 0), (TLN102, EntityId 0), (TLN103, EntityId 0)]
+            , gameSeriesCatalog = baseSeriesCatalog
             , gameMarkets = Map.fromList [(MarketId 1, market)]
             , gameHoldings = holdings
-            , gameRedemptionTable = redemptionTable
+            , gameLotteryMenu = lotteryMenuForRound roundNumber
             , gamePreviousReport = Nothing
             , gameWinner = Nothing
             }

@@ -1,58 +1,113 @@
 module Tlon.Game.Default.Rules
-  ( applyRedemptions,
+  ( applyLotteryPurchases,
     applySurvival,
     grantNextRoundTokens,
-    redemptionForRound,
+    lotteryMenuForRound,
   )
 where
 
 import qualified Data.Map.Strict as Map
 import Data.Map.Strict (Map)
+import Data.List (foldl')
 import Tlon.Core.Event
 import Tlon.Core.Rng
 import Tlon.Core.State
 import Tlon.Core.Types
 
-redemptionForRound :: Int -> Map AssetId Quantity
-redemptionForRound roundNumber =
+lotteryMenuForRound :: Int -> [LotteryOffer]
+lotteryMenuForRound roundNumber =
   case ((roundNumber - 1) `mod` 3) + 1 of
-    1 -> Map.fromList [(TLN101, 1), (TLN102, 2), (TLN103, 0)]
-    2 -> Map.fromList [(TLN101, 0), (TLN102, 1), (TLN103, 2)]
-    _ -> Map.fromList [(TLN101, 2), (TLN102, 0), (TLN103, 1)]
+    1 ->
+      [ LotteryOffer TLN101 1 1 2 1
+      , LotteryOffer TLN102 1 1 3 2
+      , LotteryOffer TLN103 1 1 4 3
+      ]
+    2 ->
+      [ LotteryOffer TLN101 1 1 4 2
+      , LotteryOffer TLN102 1 1 2 1
+      , LotteryOffer TLN103 1 1 3 2
+      ]
+    _ ->
+      [ LotteryOffer TLN101 1 1 3 2
+      , LotteryOffer TLN102 1 1 4 3
+      , LotteryOffer TLN103 1 1 2 1
+      ]
 
-applyRedemptions :: GameState -> (GameState, [Redemption])
-applyRedemptions state =
-  let governmentId = findGovernmentId state
-      redemptionTable = gameRedemptionTable state
-      (holdings', redemptions) =
-        foldl
-          (redeemEntity governmentId redemptionTable)
-          (gameHoldings state, [])
-          (livingMortals state)
-   in (state {gameHoldings = holdings'}, reverse redemptions)
+applyLotteryPurchases :: [LotteryPurchase] -> GameState -> (GameState, [LotteryResult])
+applyLotteryPurchases purchases state =
+  let normalizedPurchases = normalizePurchases state purchases
+   in case normalizedPurchases of
+        [] -> (state, [])
+        _ ->
+          let governmentId = findGovernmentId state
+              offersByAsset = Map.fromList [(lotteryOfferAssetId offer, offer) | offer <- gameLotteryMenu state]
+              (holdings', results, seed') =
+                foldl'
+                  (resolvePurchase governmentId offersByAsset)
+                  (gameHoldings state, [], gameSeed state)
+                  normalizedPurchases
+           in (state {gameHoldings = holdings', gameSeed = seed'}, reverse results)
 
-redeemEntity :: EntityId -> Map AssetId Quantity -> (Holdings, [Redemption]) -> EntityId -> (Holdings, [Redemption])
-redeemEntity governmentId redemptionTable (holdings, events) entityId' =
-  foldl
-    (redeemOne governmentId redemptionTable entityId')
-    (holdings, events)
-    allAbstractAssets
+normalizePurchases :: GameState -> [LotteryPurchase] -> [LotteryPurchase]
+normalizePurchases state =
+  foldl' collect []
+  where
+    offerAssets = [lotteryOfferAssetId offer | offer <- gameLotteryMenu state]
+    collect purchases purchase
+      | lotteryPurchaseQuantity purchase <= 0 = purchases
+      | lotteryPurchaseAssetId purchase `notElem` offerAssets = purchases
+      | otherwise = purchases ++ [purchase]
 
-redeemOne :: EntityId -> Map AssetId Quantity -> EntityId -> (Holdings, [Redemption]) -> AssetId -> (Holdings, [Redemption])
-redeemOne governmentId redemptionTable entityId' (holdings, events) asset =
-  let quantity = balanceOf holdings entityId' asset
-      payoutRate = Map.findWithDefault 0 asset redemptionTable
-      payout = quantity * payoutRate
-   in if quantity <= 0
-        then (holdings, events)
-        else
-          let holdings' =
-                adjustBalance governmentId asset quantity
-                  . adjustBalance entityId' asset (negate quantity)
-                  . adjustBalance governmentId TLN001 (negate payout)
-                  . adjustBalance entityId' TLN001 payout
-                  $ holdings
-           in (holdings', Redemption entityId' asset quantity payout : events)
+resolvePurchase ::
+  EntityId ->
+  Map AssetId LotteryOffer ->
+  (Holdings, [LotteryResult], Int) ->
+  LotteryPurchase ->
+  (Holdings, [LotteryResult], Int)
+resolvePurchase governmentId offersByAsset (holdings, results, seed) purchase =
+  case Map.lookup (lotteryPurchaseAssetId purchase) offersByAsset of
+    Nothing -> (holdings, results, seed)
+    Just offer ->
+      let entityId' = lotteryPurchaseEntityId purchase
+          requestedTickets = lotteryPurchaseQuantity purchase
+          ticketPrice = lotteryOfferTicketPrice offer
+          affordableTickets =
+            if ticketPrice <= 0
+              then 0
+              else balanceOf holdings entityId' TLN001 `div` ticketPrice
+          ticketCount = min requestedTickets affordableTickets
+       in if ticketCount <= 0
+            then (holdings, results, seed)
+            else
+              let purchaseCost = ticketCount * ticketPrice
+                  holdingsAfterPurchase =
+                    adjustBalance governmentId TLN001 purchaseCost
+                      . adjustBalance entityId' TLN001 (negate purchaseCost)
+                      $ holdings
+                  (winCount, seed') = drawWins ticketCount offer seed
+                  payoutQuantity = winCount * lotteryOfferPayoutQuantity offer
+                  holdingsAfterPayout =
+                    adjustBalance governmentId (lotteryOfferAssetId offer) (negate payoutQuantity)
+                      . adjustBalance entityId' (lotteryOfferAssetId offer) payoutQuantity
+                      $ holdingsAfterPurchase
+                  result =
+                    LotteryResult
+                      { lotteryResultEntityId = entityId'
+                      , lotteryResultAssetId = lotteryOfferAssetId offer
+                      , lotteryResultTicketCount = ticketCount
+                      , lotteryResultWinCount = winCount
+                      , lotteryResultPayoutQuantity = payoutQuantity
+                      }
+               in (holdingsAfterPayout, result : results, seed')
+
+drawWins :: Quantity -> LotteryOffer -> Int -> (Quantity, Int)
+drawWins ticketCount offer seed =
+  let go 0 wins currentSeed = (wins, currentSeed)
+      go remaining wins currentSeed =
+        let (draw, nextSeed') = drawBounded (lotteryOfferOddsDenominator offer) currentSeed
+            wins' = if draw < lotteryOfferOddsNumerator offer then wins + 1 else wins
+         in go (remaining - 1) wins' nextSeed'
+   in go ticketCount 0 seed
 
 applySurvival :: GameState -> (GameState, [SurvivalResult], Maybe EntityId)
 applySurvival state =
@@ -62,9 +117,9 @@ applySurvival state =
       (stateAfterRefund, refundRecipient) = refundStake governmentId stateAfterStake eligible
       results =
         [ SurvivalResult
-            { survivalEntityId = entityId',
-              survivalPaidStake = entityId' `elem` paidSet,
-              survivalRefunded = refundRecipient == Just entityId'
+            { survivalEntityId = entityId'
+            , survivalPaidStake = entityId' `elem` paidSet
+            , survivalRefunded = refundRecipient == Just entityId'
             }
           | entityId' <- mortals
         ]
