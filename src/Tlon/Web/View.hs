@@ -425,7 +425,7 @@ renderEntityRow :: GameState -> Entity -> Html ()
 renderEntityRow state entity =
     let entityLedger = Map.findWithDefault Map.empty (entityId entity) (gameHoldings state)
         renderAsset :: AssetId -> Html ()
-        renderAsset asset = td_ (toHtml (show (Map.findWithDefault 0 asset entityLedger)))
+        renderAsset asset = td_ (toHtml (show (Map.findWithDefault 0 (assetSeriesId asset) entityLedger)))
      in tr_ $ do
             td_ (toHtml (entityName entity))
             td_ (toHtml (show (entityKind entity)))
@@ -582,10 +582,10 @@ playerInventoryPanel runningGame participant =
         Just entityId' ->
             let ledger = Map.findWithDefault Map.empty entityId' (gameHoldings (runningState runningGame))
              in holdingsTable
-                    [ (TLN001, Map.findWithDefault 0 TLN001 ledger)
-                    , (TLN101, Map.findWithDefault 0 TLN101 ledger)
-                    , (TLN102, Map.findWithDefault 0 TLN102 ledger)
-                    , (TLN103, Map.findWithDefault 0 TLN103 ledger)
+                    [ (TLN001, Map.findWithDefault 0 (assetSeriesId TLN001) ledger)
+                    , (TLN101, Map.findWithDefault 0 (assetSeriesId TLN101) ledger)
+                    , (TLN102, Map.findWithDefault 0 (assetSeriesId TLN102) ledger)
+                    , (TLN103, Map.findWithDefault 0 (assetSeriesId TLN103) ledger)
                     ]
 
 stagedOrdersTable :: RunningGame -> HumanPlayer -> Html ()
@@ -608,7 +608,7 @@ stagedOrdersTable runningGame participant =
                         ( \order ->
                             tr_ $ do
                                 td_ (toHtml (show (orderSide order)))
-                                td_ (toHtml (show (orderBaseAsset order)))
+                                td_ (toHtml (orderBaseAsset order))
                                 td_ (toHtml (show (orderQuantity order)))
                                 td_ (toHtml (show (orderLimitPrice order)))
                                 td_ $
@@ -771,13 +771,13 @@ marketRuleLabel state market marketRule =
         QuoteAssetMustBeOwnerIssuedCurrency ->
             "Trades must be quoted in an owner-issued currency (" ++ showOwnerCurrencies state market ++ ")."
 
-showMarketPairs :: [(AssetId, AssetId)] -> String
+showMarketPairs :: [(SeriesId, SeriesId)] -> String
 showMarketPairs pairs =
     case pairs of
         [] -> "none"
         _ -> unwords (map showPair pairs)
   where
-    showPair (baseAsset, quoteAsset) = show baseAsset ++ "/" ++ show quoteAsset
+    showPair (baseAsset, quoteAsset) = baseAsset ++ "/" ++ quoteAsset
 
 showOwnerCurrencies :: GameState -> Market -> String
 showOwnerCurrencies state market =
@@ -830,7 +830,8 @@ renderReportSummary report = do
         li_ ("Fills: " <> toHtml (show (length (reportFills report))))
         li_ ("Expirations: " <> toHtml (show (length (reportExpiredOrders report))))
         li_ ("Lottery purchases: " <> toHtml (show (length (reportLotteryPurchases report))))
-        li_ ("Lottery results: " <> toHtml (show (length (reportLotteryResults report))))
+        li_ ("Lottery issuances: " <> toHtml (show (length (reportLotteryIssuances report))))
+        li_ ("Lottery settlements: " <> toHtml (show (length (reportLotterySettlements report))))
         li_ ("Refund recipient: " <> toHtml (fromMaybe "none" (fmap showEntityId reportRefundRecipient')))
   where
     reportRefundRecipient' = reportRefundRecipient report
@@ -849,32 +850,42 @@ historyList reports =
                                 <> ": "
                                 <> toHtml (show (length (reportFills report)))
                                 <> " fills, "
-                                <> toHtml (show (length (reportLotteryResults report)))
-                                <> " lottery results"
+                                <> toHtml (show (length (reportLotterySettlements report)))
+                                <> " lottery settlements"
                     )
                     (reverse reports)
 
 renderLotteryResultsSummary :: RoundReport -> Html ()
 renderLotteryResultsSummary report =
-    if null (reportLotteryResults report)
-        then p_ "No lottery purchases last round."
+    if null (reportLotteryIssuances report) && null (reportLotterySettlements report)
+        then p_ "No lottery activity last round."
         else do
             p_ ("Round " <> toHtml (show (reportRoundNumber report)))
-            ul_ [class_ "compact-list"] $
-                mapM_ renderLotteryResultLine (reportLotteryResults report)
+            ul_ [class_ "compact-list"] $ do
+                mapM_ renderLotteryIssuanceLine (reportLotteryIssuances report)
+                mapM_ renderLotterySettlementLine (reportLotterySettlements report)
 
-renderLotteryResultLine :: LotteryResult -> Html ()
-renderLotteryResultLine result =
+renderLotteryIssuanceLine :: LotteryIssuance -> Html ()
+renderLotteryIssuanceLine issuance =
     li_ $
-        toHtml (showEntityId (lotteryResultEntityId result))
-            <> ": "
-            <> toHtml (show (lotteryResultTicketCount result))
-            <> " tickets on "
-            <> toHtml (show (lotteryResultAssetId result))
+        toHtml (showEntityId (lotteryIssuanceEntityId issuance))
+            <> ": issued "
+            <> toHtml (show (lotteryIssuanceTicketCount issuance))
+            <> " tickets of "
+            <> toHtml (lotteryIssuanceSeriesId issuance)
+
+renderLotterySettlementLine :: LotterySettlement -> Html ()
+renderLotterySettlementLine settlement =
+    li_ $
+        toHtml (showEntityId (lotterySettlementEntityId settlement))
+            <> ": settled "
+            <> toHtml (show (lotterySettlementTicketCount settlement))
+            <> " tickets of "
+            <> toHtml (lotterySettlementSeriesId settlement)
             <> ", "
-            <> toHtml (show (lotteryResultWinCount result))
+            <> toHtml (show (lotterySettlementWinCount settlement))
             <> " wins, payout "
-            <> toHtml (show (lotteryResultPayoutQuantity result))
+            <> toHtml (show (lotterySettlementPayoutQuantity settlement))
 
 lotteryMenuPanel :: GameState -> Html ()
 lotteryMenuPanel state =

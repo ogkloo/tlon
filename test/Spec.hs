@@ -12,9 +12,16 @@ baseSeriesCatalog =
         [ ( assetSeriesId assetId
           , InstrumentSeries
                 { instrumentSeriesId = assetSeriesId assetId
-                , instrumentSeriesAssetId = assetId
+                , instrumentSeriesBaseAssetId = Just assetId
                 , instrumentSeriesKind = BaseSeries
                 , instrumentSeriesIssuer = EntityId 0
+                , instrumentSeriesRoundIssued = Nothing
+                , instrumentSeriesSettlementRound = Nothing
+                , instrumentSeriesTicketPrice = Nothing
+                , instrumentSeriesOddsNumerator = Nothing
+                , instrumentSeriesOddsDenominator = Nothing
+                , instrumentSeriesPayoutQuantity = Nothing
+                , instrumentSeriesPayoutAssetId = Nothing
                 }
           )
         | assetId <- [TLN001, TLN101, TLN102, TLN103]
@@ -49,6 +56,9 @@ main = do
     runTest
         "submitted staged actions feed the resolved round"
         testSubmittedActionsResolve
+    runTest
+        "duration-one lottery tickets settle the next round"
+        testLotteryTicketSettlement
     runTest
         "manual rounds wait for every player submission"
         testManualRoundSubmission
@@ -104,9 +114,9 @@ testPriceTimeMatching = do
         sellerB = EntityId 2
         buyer = EntityId 3
         orders =
-            [ ValidatedOrder (Order (OrderId 1) sellerA market Sell TLN101 TLN001 2 2) 0
-            , ValidatedOrder (Order (OrderId 2) sellerB market Sell TLN101 TLN001 2 1) 1
-            , ValidatedOrder (Order (OrderId 3) buyer market Buy TLN101 TLN001 3 3) 2
+            [ ValidatedOrder (Order (OrderId 1) sellerA market Sell (assetSeriesId TLN101) (assetSeriesId TLN001) 2 2) 0
+            , ValidatedOrder (Order (OrderId 2) sellerB market Sell (assetSeriesId TLN101) (assetSeriesId TLN001) 2 1) 1
+            , ValidatedOrder (Order (OrderId 3) buyer market Buy (assetSeriesId TLN101) (assetSeriesId TLN001) 3 3) 2
             ]
         fills = matchRound PriceTimeFIFO orders
     assertEqual "fill count" 2 (length fills)
@@ -133,11 +143,11 @@ testReserveValidation = do
         state0 = initialState config
         [player1, player2] = livingMortals state0
         holdings' =
-            adjustBalance player2 TLN101 1 (gameHoldings state0)
+            adjustBalance player2 (assetSeriesId TLN101) 1 (gameHoldings state0)
         state1 = state0{gameHoldings = holdings'}
-        order1 = Order (OrderId 1) player1 (MarketId 1) Buy TLN101 TLN001 2 2
-        order2 = Order (OrderId 2) player1 (MarketId 1) Buy TLN102 TLN001 2 2
-        order3 = Order (OrderId 3) player2 (MarketId 1) Sell TLN101 TLN001 1 2
+        order1 = Order (OrderId 1) player1 (MarketId 1) Buy (assetSeriesId TLN101) (assetSeriesId TLN001) 2 2
+        order2 = Order (OrderId 2) player1 (MarketId 1) Buy (assetSeriesId TLN102) (assetSeriesId TLN001) 2 2
+        order3 = Order (OrderId 3) player2 (MarketId 1) Sell (assetSeriesId TLN101) (assetSeriesId TLN001) 1 2
         (_, events) = stepRound config (RoundInputs [order1, order2, order3] []) state1
         report = roundReportFrom events
     assertEqual "one order invalidated by reservation" 1 (length (reportInvalidOrders report))
@@ -170,29 +180,32 @@ testRoundSettlementAndLottery = do
                 ]
             )
                 { gameSeed = 1
-                , gameLotteryMenu = [LotteryOffer TLN101 1 1 1 1]
+                , gameLotteryMenu = [LotteryOffer (assetSeriesId TLN101) 1 1 1 1 1]
                 }
         orders =
-            [ Order (OrderId 1) (entityId seller) (MarketId 1) Sell TLN101 TLN001 2 2
-            , Order (OrderId 2) (entityId buyer) (MarketId 1) Buy TLN101 TLN001 1 2
+            [ Order (OrderId 1) (entityId seller) (MarketId 1) Sell (assetSeriesId TLN101) (assetSeriesId TLN001) 2 2
+            , Order (OrderId 2) (entityId buyer) (MarketId 1) Buy (assetSeriesId TLN101) (assetSeriesId TLN001) 1 2
             ]
-        purchases = [LotteryPurchase (entityId buyer) TLN101 2]
+        purchases = [LotteryPurchase (entityId buyer) (assetSeriesId TLN101) 2]
         (state1, events) = stepRound config (RoundInputs orders purchases) state0
         report = roundReportFrom events
         governmentId = EntityId 0
     assertEqual "one fill in the round" 1 (length (reportFills report))
     assertEqual "one expired seller remainder" [ExpiredOrder (OrderId 1) (entityId seller) 1] (reportExpiredOrders report)
     assertEqual "lottery purchase is reported" purchases (reportLotteryPurchases report)
-    assertEqual
-        "buyer lottery resolves against published odds"
-        [LotteryResult (entityId buyer) TLN101 2 2 2]
-        (reportLotteryResults report)
+    case reportLotteryIssuances report of
+        [issuedTicket] -> do
+            assertEqual "lottery purchase issues a ticket series" (entityId buyer) (lotteryIssuanceEntityId issuedTicket)
+            assertEqual "issued ticket quantity is recorded" 2 (lotteryIssuanceTicketCount issuedTicket)
+        _ -> do
+            putStrLn "FAILED: expected exactly one issued ticket result"
+            exitFailure
     assertEqual "round advances" 2 (gameRoundNumber state1)
     assertEqual "next round lottery menu advances" (lotteryMenuForRound 2) (gameLotteryMenu state1)
-    assertEqual "seller keeps trade proceeds then pays stake" 2 (balanceOf (gameHoldings state1) (entityId seller) TLN001)
-    assertEqual "buyer spends on trade and lottery, then gets the refund" 1 (balanceOf (gameHoldings state1) (entityId buyer) TLN001)
-    assertEqual "government quote balance reflects lottery sales and survival net" 103 (balanceOf (gameHoldings state1) governmentId TLN001)
-    assertEqual "buyer keeps traded inventory and lottery payout" 3 (balanceOf (gameHoldings state1) (entityId buyer) TLN101)
+    assertEqual "seller keeps trade proceeds and gets the refund" 3 (balanceOf (gameHoldings state1) (entityId seller) (assetSeriesId TLN001))
+    assertEqual "buyer spends on trade and ticket issuance" 0 (balanceOf (gameHoldings state1) (entityId buyer) (assetSeriesId TLN001))
+    assertEqual "government quote balance reflects ticket sales and survival net" 103 (balanceOf (gameHoldings state1) governmentId (assetSeriesId TLN001))
+    assertEqual "buyer keeps traded inventory before ticket settlement" 1 (balanceOf (gameHoldings state1) (entityId buyer) (assetSeriesId TLN101))
 
 testExpiryAndGrantReporting :: IO ()
 testExpiryAndGrantReporting = do
@@ -214,7 +227,7 @@ testExpiryAndGrantReporting = do
                 [ (entityId player1, [(TLN001, 2), (TLN101, 1)])
                 , (entityId player2, [(TLN001, 2)])
                 ]
-        order = Order (OrderId 1) (entityId player1) (MarketId 1) Sell TLN101 TLN001 1 2
+        order = Order (OrderId 1) (entityId player1) (MarketId 1) Sell (assetSeriesId TLN101) (assetSeriesId TLN001) 1 2
         (state1, events) = stepRound config (RoundInputs [order] []) state0
         report = roundReportFrom events
         surviving = livingMortals state1
@@ -223,7 +236,7 @@ testExpiryAndGrantReporting = do
     assertEqual "both mortals survive" [entityId player1, entityId player2] surviving
     assertEqual "one grant per surviving mortal" 2 (length (reportNextRoundGrants report))
     assertEqual "reported next lottery menu matches state" (reportNextLotteryMenu report) (gameLotteryMenu state1)
-    assertEqual "grants are actually reflected in holdings" 3 (sum [balanceOf (gameHoldings state1) entityId' TLN101 + balanceOf (gameHoldings state1) entityId' TLN102 + balanceOf (gameHoldings state1) entityId' TLN103 | entityId' <- surviving])
+    assertEqual "grants are actually reflected in holdings" 3 (sum [balanceOf (gameHoldings state1) entityId' (assetSeriesId TLN101) + balanceOf (gameHoldings state1) entityId' (assetSeriesId TLN102) + balanceOf (gameHoldings state1) entityId' (assetSeriesId TLN103) | entityId' <- surviving])
 
 testOpposingSideRejection :: IO ()
 testOpposingSideRejection = do
@@ -235,9 +248,9 @@ testOpposingSideRejection = do
                 , configRoundGrantQuantity = 0
                 , configInitialSeed = 13
                 }
-        state0 = (initialState config){gameHoldings = adjustBalance (EntityId 1) TLN101 1 (gameHoldings (initialState config))}
-        order1 = Order (OrderId 1) (EntityId 1) (MarketId 1) Buy TLN101 TLN001 1 2
-        order2 = Order (OrderId 2) (EntityId 1) (MarketId 1) Sell TLN101 TLN001 1 2
+        state0 = (initialState config){gameHoldings = adjustBalance (EntityId 1) (assetSeriesId TLN101) 1 (gameHoldings (initialState config))}
+        order1 = Order (OrderId 1) (EntityId 1) (MarketId 1) Buy (assetSeriesId TLN101) (assetSeriesId TLN001) 1 2
+        order2 = Order (OrderId 2) (EntityId 1) (MarketId 1) Sell (assetSeriesId TLN101) (assetSeriesId TLN001) 1 2
         (_, events) = stepRound config (RoundInputs [order1, order2] []) state0
         report = roundReportFrom events
     case reportInvalidOrders report of
@@ -265,7 +278,7 @@ testGovernmentMarketRule = do
                 { marketId = MarketId 1
                 , marketName = "Government Market"
                 , marketOwner = EntityId 0
-                , marketPairs = [(TLN101, TLN001), (TLN101, TLN102)]
+                , marketPairs = [(assetSeriesId TLN101, assetSeriesId TLN001), (assetSeriesId TLN101, assetSeriesId TLN102)]
                 , marketRules = [QuoteAssetMustBeOwnerIssuedCurrency]
                 }
         state0 =
@@ -279,16 +292,16 @@ testGovernmentMarketRule = do
                 , gameSeriesCatalog = baseSeriesCatalog
                 , gameHoldings =
                     Map.fromList
-                        [ (EntityId 0, Map.fromList [(TLN001, 100), (TLN101, 100), (TLN102, 100), (TLN103, 100)])
-                        , (EntityId 1, Map.fromList [(TLN101, 1)])
-                        , (EntityId 2, Map.fromList [(TLN102, 5)])
+                        [ (EntityId 0, Map.fromList [(assetSeriesId TLN001, 100), (assetSeriesId TLN101, 100), (assetSeriesId TLN102, 100), (assetSeriesId TLN103, 100)])
+                        , (EntityId 1, Map.fromList [(assetSeriesId TLN101, 1)])
+                        , (EntityId 2, Map.fromList [(assetSeriesId TLN102, 5)])
                         ]
                 , gameLotteryMenu = lotteryMenuForRound 1
                 , gamePreviousReport = Nothing
                 , gameWinner = Nothing
                 }
-        sellOrder = Order (OrderId 1) (EntityId 1) (MarketId 1) Sell TLN101 TLN102 1 2
-        buyOrder = Order (OrderId 2) (EntityId 2) (MarketId 1) Buy TLN101 TLN102 1 2
+        sellOrder = Order (OrderId 1) (EntityId 1) (MarketId 1) Sell (assetSeriesId TLN101) (assetSeriesId TLN102) 1 2
+        buyOrder = Order (OrderId 2) (EntityId 2) (MarketId 1) Buy (assetSeriesId TLN101) (assetSeriesId TLN102) 1 2
         (_, events) = stepRound config (RoundInputs [sellOrder, buyOrder] []) state0
         report = roundReportFrom events
     assertEqual "orders violating the market rule are rejected" 2 (length (reportInvalidOrders report))
@@ -372,7 +385,7 @@ testPlayerActionStaging = do
     case planOrders plan of
         [order] -> do
             assertEqual "staged order side" Buy (orderSide order)
-            assertEqual "staged order asset" TLN101 (orderBaseAsset order)
+            assertEqual "staged order asset" (assetSeriesId TLN101) (orderBaseAsset order)
             assertEqual "staged order quantity" 2 (orderQuantity order)
             assertEqual "staged order price" 3 (orderLimitPrice order)
         _ -> do
@@ -395,8 +408,49 @@ testSubmittedActionsResolve = do
     assertEqual "round advances after submitted actions resolve" 2 (gameRoundNumber (runningState runningGame))
     assertEqual "submitted staged orders reach the report" 2 (length (reportSubmittedOrders report))
     assertEqual "the staged match fills" 1 (length (reportFills report))
-    assertEqual "one lottery purchase recorded" [LotteryPurchase (EntityId 1) TLN101 1] (reportLotteryPurchases report)
-    assertEqual "one lottery result recorded" [LotteryResult (EntityId 1) TLN101 1 0 0] (reportLotteryResults report)
+    assertEqual "one lottery purchase recorded" [LotteryPurchase (EntityId 1) (assetSeriesId TLN101) 1] (reportLotteryPurchases report)
+    case reportLotteryIssuances report of
+        [issuedTicket] -> do
+            assertEqual "one lottery ticket is issued" (EntityId 1) (lotteryIssuanceEntityId issuedTicket)
+            assertEqual "issued ticket count is reported" 1 (lotteryIssuanceTicketCount issuedTicket)
+        _ -> do
+            putStrLn "FAILED: expected exactly one issued ticket result"
+            exitFailure
+
+testLotteryTicketSettlement :: IO ()
+testLotteryTicketSettlement = do
+    let config =
+            defaultConfig
+                { configPlayerCount = 2
+                , configStartingAccessTokens = 0
+                , configInitialBundleMax = 0
+                , configRoundGrantQuantity = 0
+                , configInitialSeed = 5
+                }
+        seller = Entity (EntityId 1) "Seller-1" PlayerEntity True
+        buyer = Entity (EntityId 2) "Buyer-2" PlayerEntity True
+        state0 =
+            ( customState
+                1
+                1
+                [seller, buyer]
+                [ (entityId seller, [(TLN001, 1), (TLN101, 2)])
+                , (entityId buyer, [(TLN001, 5)])
+                ]
+            )
+                { gameLotteryMenu = [LotteryOffer (assetSeriesId TLN101) 1 1 1 1 1] }
+        purchases = [LotteryPurchase (entityId buyer) (assetSeriesId TLN101) 2]
+        (state1, _) = stepRound config (RoundInputs [] purchases) state0
+        (state2, events2) = stepRound config (RoundInputs [] []) state1
+        report2 = roundReportFrom events2
+    case reportLotterySettlements report2 of
+        [settledTicket] -> do
+            assertEqual "ticket series settles next round" 2 (lotterySettlementWinCount settledTicket)
+            assertEqual "ticket payout arrives on settlement round" 2 (lotterySettlementPayoutQuantity settledTicket)
+        _ -> do
+            putStrLn "FAILED: expected exactly one settled ticket result"
+            exitFailure
+    assertEqual "buyer receives payout asset on settlement" 2 (balanceOf (gameHoldings state2) (entityId buyer) (assetSeriesId TLN101))
 
 testManualRoundSubmission :: IO ()
 testManualRoundSubmission = do
@@ -486,7 +540,7 @@ testAdvanceGameToEnd = do
                 { marketId = MarketId 1
                 , marketName = "Default Market"
                 , marketOwner = EntityId 0
-                , marketPairs = [(asset, TLN001) | asset <- allAbstractAssets]
+                , marketPairs = [(assetSeriesId asset, assetSeriesId TLN001) | asset <- allAbstractAssets]
                 , marketRules = [QuoteAssetMustBeOwnerIssuedCurrency]
                 }
         runningGame =
@@ -512,7 +566,7 @@ testAdvanceGameToEnd = do
                         , gameAssetIssuers = Map.fromList [(TLN001, EntityId 0), (TLN101, EntityId 0), (TLN102, EntityId 0), (TLN103, EntityId 0)]
                         , gameSeriesCatalog = baseSeriesCatalog
                         , gameMarkets = Map.fromList [(MarketId 1, market)]
-                        , gameHoldings = Map.fromList [(EntityId 0, Map.fromList [(TLN001, 100)]), (EntityId 1, Map.empty)]
+                        , gameHoldings = Map.fromList [(EntityId 0, Map.fromList [(assetSeriesId TLN001, 100)]), (EntityId 1, Map.empty)]
                         , gameLotteryMenu = lotteryMenuForRound 1
                         , gamePreviousReport = Nothing
                         , gameWinner = Nothing
@@ -581,12 +635,12 @@ testGovernmentWin = do
                 { marketId = MarketId 1
                 , marketName = "Default Market"
                 , marketOwner = EntityId 0
-                , marketPairs = [(asset, TLN001) | asset <- allAbstractAssets]
+                , marketPairs = [(assetSeriesId asset, assetSeriesId TLN001) | asset <- allAbstractAssets]
                 , marketRules = [QuoteAssetMustBeOwnerIssuedCurrency]
                 }
         holdings =
             Map.fromList
-                [ (EntityId 0, Map.fromList [(TLN001, 100), (TLN101, 100), (TLN102, 100), (TLN103, 100)])
+                [ (EntityId 0, Map.fromList [(assetSeriesId TLN001, 100), (assetSeriesId TLN101, 100), (assetSeriesId TLN102, 100), (assetSeriesId TLN103, 100)])
                 , (EntityId 1, Map.empty)
                 , (EntityId 2, Map.empty)
                 ]
@@ -623,7 +677,7 @@ customState roundNumber seed players playerHoldings =
                 { marketId = MarketId 1
                 , marketName = "Default Market"
                 , marketOwner = EntityId 0
-                , marketPairs = [(asset, TLN001) | asset <- allAbstractAssets]
+                , marketPairs = [(assetSeriesId asset, assetSeriesId TLN001) | asset <- allAbstractAssets]
                 , marketRules = [QuoteAssetMustBeOwnerIssuedCurrency]
                 }
         entities =
@@ -633,8 +687,15 @@ customState roundNumber seed players playerHoldings =
                 )
         holdings =
             Map.fromList
-                ( (EntityId 0, Map.fromList [(TLN001, 100), (TLN101, 100), (TLN102, 100), (TLN103, 100)])
-                    : [(entityId', Map.fromList ledger) | (entityId', ledger) <- playerHoldings]
+                ( ( EntityId 0
+                  , Map.fromList
+                        [ (assetSeriesId TLN001, 100)
+                        , (assetSeriesId TLN101, 100)
+                        , (assetSeriesId TLN102, 100)
+                        , (assetSeriesId TLN103, 100)
+                        ]
+                  )
+                    : [(entityId', Map.fromList [(assetSeriesId assetId, quantity) | (assetId, quantity) <- ledger]) | (entityId', ledger) <- playerHoldings]
                 )
      in GameState
             { gameRoundNumber = roundNumber

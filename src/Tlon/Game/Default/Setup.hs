@@ -30,7 +30,7 @@ initialState config =
                 { marketId = MarketId 1
                 , marketName = "Default Market"
                 , marketOwner = entityId government
-                , marketPairs = [(asset, TLN001) | asset <- allAbstractAssets]
+                , marketPairs = [(assetSeriesId asset, assetSeriesId TLN001) | asset <- allAbstractAssets]
                 , marketRules = [QuoteAssetMustBeOwnerIssuedCurrency]
                 }
         (holdings, finalSeed) =
@@ -60,9 +60,16 @@ buildBaseSeriesCatalog assetIssuers =
         [ ( assetSeriesId assetId
           , InstrumentSeries
                 { instrumentSeriesId = assetSeriesId assetId
-                , instrumentSeriesAssetId = assetId
+                , instrumentSeriesBaseAssetId = Just assetId
                 , instrumentSeriesKind = BaseSeries
                 , instrumentSeriesIssuer = issuerId
+                , instrumentSeriesRoundIssued = Nothing
+                , instrumentSeriesSettlementRound = Nothing
+                , instrumentSeriesTicketPrice = Nothing
+                , instrumentSeriesOddsNumerator = Nothing
+                , instrumentSeriesOddsDenominator = Nothing
+                , instrumentSeriesPayoutQuantity = Nothing
+                , instrumentSeriesPayoutAssetId = Nothing
                 }
           )
         | (assetId, issuerId) <- Map.toList assetIssuers
@@ -98,10 +105,10 @@ buildInitialHoldings config governmentId players seed =
     let governmentReserve = configGovernmentReserve config
         governmentHoldings =
             Map.fromList
-                [ (TLN001, governmentReserve)
-                , (TLN101, governmentReserve)
-                , (TLN102, governmentReserve)
-                , (TLN103, governmentReserve)
+                [ (assetSeriesId TLN001, governmentReserve)
+                , (assetSeriesId TLN101, governmentReserve)
+                , (assetSeriesId TLN102, governmentReserve)
+                , (assetSeriesId TLN103, governmentReserve)
                 ]
         baseHoldings = Map.singleton governmentId governmentHoldings
         go (holdings, currentSeed) player =
@@ -111,10 +118,10 @@ buildInitialHoldings config governmentId players seed =
                 (bundle103, seed3) = drawBounded (configInitialBundleMax config + 1) seed2
                 ledger =
                     Map.fromList
-                        [ (TLN001, configStartingAccessTokens config)
-                        , (TLN101, bundle101)
-                        , (TLN102, bundle102)
-                        , (TLN103, bundle103)
+                        [ (assetSeriesId TLN001, configStartingAccessTokens config)
+                        , (assetSeriesId TLN101, bundle101)
+                        , (assetSeriesId TLN102, bundle102)
+                        , (assetSeriesId TLN103, bundle103)
                         ]
                 holdings' = Map.insert playerId ledger holdings
              in (holdings', seed3)

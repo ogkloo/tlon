@@ -3,7 +3,8 @@ module Tlon.Core.Event
     GameEvent (..),
     Grant (..),
     InvalidOrder (..),
-    LotteryResult (..),
+    LotteryIssuance (..),
+    LotterySettlement (..),
     RoundReport (..),
     SurvivalResult (..),
   )
@@ -24,12 +25,19 @@ data ExpiredOrder = ExpiredOrder
   }
   deriving (Eq, Show)
 
-data LotteryResult = LotteryResult
-  { lotteryResultEntityId :: EntityId,
-    lotteryResultAssetId :: AssetId,
-    lotteryResultTicketCount :: Quantity,
-    lotteryResultWinCount :: Quantity,
-    lotteryResultPayoutQuantity :: Quantity
+data LotteryIssuance = LotteryIssuance
+  { lotteryIssuanceEntityId :: EntityId,
+    lotteryIssuanceSeriesId :: SeriesId,
+    lotteryIssuanceTicketCount :: Quantity
+  }
+  deriving (Eq, Show)
+
+data LotterySettlement = LotterySettlement
+  { lotterySettlementEntityId :: EntityId,
+    lotterySettlementSeriesId :: SeriesId,
+    lotterySettlementTicketCount :: Quantity,
+    lotterySettlementWinCount :: Quantity,
+    lotterySettlementPayoutQuantity :: Quantity
   }
   deriving (Eq, Show)
 
@@ -55,7 +63,8 @@ data RoundReport = RoundReport
     reportInvalidOrders :: [InvalidOrder],
     reportFills :: [Fill],
     reportExpiredOrders :: [ExpiredOrder],
-    reportLotteryResults :: [LotteryResult],
+    reportLotteryIssuances :: [LotteryIssuance],
+    reportLotterySettlements :: [LotterySettlement],
     reportSurvivalResults :: [SurvivalResult],
     reportRefundRecipient :: Maybe EntityId,
     reportNextRoundGrants :: [Grant],

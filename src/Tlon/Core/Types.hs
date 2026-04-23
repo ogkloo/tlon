@@ -24,6 +24,7 @@ module Tlon.Core.Types (
     assetSeriesId,
     isCurrencyAsset,
     isAbstractAsset,
+    ticketSeriesId,
 )
 where
 
@@ -55,6 +56,23 @@ allAbstractAssets = [TLN101, TLN102, TLN103]
 assetSeriesId :: AssetId -> SeriesId
 assetSeriesId = show
 
+ticketSeriesId :: Int -> Int -> AssetId -> Quantity -> Int -> Int -> Quantity -> SeriesId
+ticketSeriesId roundIssued duration payoutAsset ticketPrice oddsNumerator oddsDenominator payoutQuantity =
+    "LOTTO-"
+        ++ show roundIssued
+        ++ "-"
+        ++ show duration
+        ++ "-"
+        ++ show payoutAsset
+        ++ "-"
+        ++ show ticketPrice
+        ++ "-"
+        ++ show oddsNumerator
+        ++ "-"
+        ++ show oddsDenominator
+        ++ "-"
+        ++ show payoutQuantity
+
 isAbstractAsset :: AssetId -> Bool
 isAbstractAsset asset = asset `elem` allAbstractAssets
 
@@ -73,24 +91,32 @@ data InstrumentSeriesKind
 
 data InstrumentSeries = InstrumentSeries
     { instrumentSeriesId :: SeriesId
-    , instrumentSeriesAssetId :: AssetId
+    , instrumentSeriesBaseAssetId :: Maybe AssetId
     , instrumentSeriesKind :: InstrumentSeriesKind
     , instrumentSeriesIssuer :: EntityId
+    , instrumentSeriesRoundIssued :: Maybe Int
+    , instrumentSeriesSettlementRound :: Maybe Int
+    , instrumentSeriesTicketPrice :: Maybe Quantity
+    , instrumentSeriesOddsNumerator :: Maybe Int
+    , instrumentSeriesOddsDenominator :: Maybe Int
+    , instrumentSeriesPayoutQuantity :: Maybe Quantity
+    , instrumentSeriesPayoutAssetId :: Maybe AssetId
     }
     deriving (Eq, Show)
 
 data LotteryOffer = LotteryOffer
-    { lotteryOfferAssetId :: AssetId
+    { lotteryOfferAssetId :: SeriesId
     , lotteryOfferTicketPrice :: Quantity
     , lotteryOfferOddsNumerator :: Int
     , lotteryOfferOddsDenominator :: Int
     , lotteryOfferPayoutQuantity :: Quantity
+    , lotteryOfferDurationRounds :: Int
     }
     deriving (Eq, Show)
 
 data LotteryPurchase = LotteryPurchase
     { lotteryPurchaseEntityId :: EntityId
-    , lotteryPurchaseAssetId :: AssetId
+    , lotteryPurchaseAssetId :: SeriesId
     , lotteryPurchaseQuantity :: Quantity
     }
     deriving (Eq, Show)
@@ -116,7 +142,7 @@ data Market = Market
     { marketId :: MarketId
     , marketName :: String
     , marketOwner :: EntityId
-    , marketPairs :: [(AssetId, AssetId)]
+    , marketPairs :: [(SeriesId, SeriesId)]
     , marketRules :: [MarketRule]
     }
     deriving (Eq, Show)
@@ -131,8 +157,8 @@ data Order = Order
     , orderEntityId :: EntityId
     , orderMarketId :: MarketId
     , orderSide :: Side
-    , orderBaseAsset :: AssetId
-    , orderQuoteAsset :: AssetId
+    , orderBaseAsset :: SeriesId
+    , orderQuoteAsset :: SeriesId
     , orderQuantity :: Quantity
     , orderLimitPrice :: Price
     }
@@ -165,8 +191,8 @@ data Fill = Fill
     , fillBuyer :: EntityId
     , fillSeller :: EntityId
     , fillMarketId :: MarketId
-    , fillBaseAsset :: AssetId
-    , fillQuoteAsset :: AssetId
+    , fillBaseAsset :: SeriesId
+    , fillQuoteAsset :: SeriesId
     , fillQuantity :: Quantity
     , fillPrice :: Price
     }

@@ -3,7 +3,6 @@ module Tlon.Core.Engine (
 )
 where
 
-import qualified Data.Map.Strict as Map
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Tlon.Core.Event
@@ -20,8 +19,9 @@ stepRound config inputs state =
         (validatedOrders, invalidOrders) = validateOrders state submissions
         fills = matchRound (gameMatchingPolicy state) validatedOrders
         expiredOrders = computeExpiredOrders validatedOrders fills
-        settledState = state{gameHoldings = settleFills (gameHoldings state) fills}
-        (lotteryState, lotteryResults) = applyLotteryPurchases lotteryPurchases settledState
+        settledState = state{gameHoldings = settleFills state (gameHoldings state) fills}
+        (issuedState, lotteryIssuances) = applyLotteryPurchases lotteryPurchases settledState
+        (lotteryState, lotterySettlements) = applyLotterySettlements issuedState
         (survivedState, survivalResults, refundRecipient) = applySurvival lotteryState
         winner = determineWinner survivedState
         nextRoundNumber = gameRoundNumber state + 1
@@ -45,7 +45,8 @@ stepRound config inputs state =
                 , reportInvalidOrders = invalidOrders
                 , reportFills = fills
                 , reportExpiredOrders = expiredOrders
-                , reportLotteryResults = lotteryResults
+                , reportLotteryIssuances = lotteryIssuances
+                , reportLotterySettlements = lotterySettlements
                 , reportSurvivalResults = survivalResults
                 , reportRefundRecipient = refundRecipient
                 , reportNextRoundGrants = grants
@@ -71,9 +72,9 @@ validateOrders state orders =
 validateOrder ::
     GameState ->
     Holdings ->
-    Map (EntityId, MarketId, AssetId, AssetId) Side ->
+    Map (EntityId, MarketId, SeriesId, SeriesId) Side ->
     Order ->
-    Either InvalidReason (Holdings, Map (EntityId, MarketId, AssetId, AssetId) Side)
+    Either InvalidReason (Holdings, Map (EntityId, MarketId, SeriesId, SeriesId) Side)
 validateOrder state reserved seenSides order
     | not (isActiveOrderingEntity state order) = Left InactiveEntity
     | orderQuantity order <= 0 = Left NonPositiveQuantity
@@ -83,7 +84,7 @@ validateOrder state reserved seenSides order
     | hasOpposingSide seenSides order = Left OpposingSidesSamePair
     | not (hasSufficientInventory state reserved order) = Left InsufficientInventory
     | otherwise =
-        let reserved' = reserveOrder reserved order
+        let reserved' = reserveOrder state reserved order
             pairKey = (orderEntityId order, orderMarketId order, orderBaseAsset order, orderQuoteAsset order)
             seenSides' = Map.insert pairKey (orderSide order) seenSides
          in Right (reserved', seenSides')
@@ -110,12 +111,15 @@ marketRuleAllowsOrder :: GameState -> Market -> Order -> MarketRule -> Bool
 marketRuleAllowsOrder state market order rule =
     case rule of
         QuoteAssetMustBeOwnerIssuedCurrency ->
-            isCurrencyAsset quoteAsset
-                && Map.lookup quoteAsset (gameAssetIssuers state) == Just (marketOwner market)
+            case assetIdForSeries state quoteSeries of
+                Nothing -> False
+                Just quoteAsset ->
+                    isCurrencyAsset quoteAsset
+                        && Map.lookup quoteAsset (gameAssetIssuers state) == Just (marketOwner market)
   where
-    quoteAsset = orderQuoteAsset order
+    quoteSeries = orderQuoteAsset order
 
-hasOpposingSide :: Map (EntityId, MarketId, AssetId, AssetId) Side -> Order -> Bool
+hasOpposingSide :: Map (EntityId, MarketId, SeriesId, SeriesId) Side -> Order -> Bool
 hasOpposingSide seenSides order =
     case Map.lookup pairKey seenSides of
         Nothing -> False
@@ -126,7 +130,7 @@ hasOpposingSide seenSides order =
 hasSufficientInventory :: GameState -> Holdings -> Order -> Bool
 hasSufficientInventory state reserved order =
     let entityId' = orderEntityId order
-        assetToReserve =
+        seriesToReserve =
             case orderSide order of
                 Buy -> orderQuoteAsset order
                 Sell -> orderBaseAsset order
@@ -134,12 +138,12 @@ hasSufficientInventory state reserved order =
             case orderSide order of
                 Buy -> orderQuantity order * orderLimitPrice order
                 Sell -> orderQuantity order
-        available = balanceOf (gameHoldings state) entityId' assetToReserve
-        alreadyReserved = balanceOf reserved entityId' assetToReserve
+        available = balanceOf (gameHoldings state) entityId' seriesToReserve
+        alreadyReserved = balanceOf reserved entityId' seriesToReserve
      in available - alreadyReserved >= amountToReserve
 
-reserveOrder :: Holdings -> Order -> Holdings
-reserveOrder reserved order =
+reserveOrder :: GameState -> Holdings -> Order -> Holdings
+reserveOrder _ reserved order =
     case orderSide order of
         Buy ->
             adjustBalance
@@ -154,8 +158,8 @@ reserveOrder reserved order =
                 (orderQuantity order)
                 reserved
 
-settleFills :: Holdings -> [Fill] -> Holdings
-settleFills =
+settleFills :: GameState -> Holdings -> [Fill] -> Holdings
+settleFills _ =
     foldl settleOneFill
 
 settleOneFill :: Holdings -> Fill -> Holdings

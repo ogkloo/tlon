@@ -238,8 +238,8 @@ stageLimitOrder gameId playerId side asset quantity price serverState = do
                                 , orderEntityId = entityId'
                                 , orderMarketId = MarketId 1
                                 , orderSide = side
-                                , orderBaseAsset = asset
-                                , orderQuoteAsset = TLN001
+                                , orderBaseAsset = assetSeriesId asset
+                                , orderQuoteAsset = assetSeriesId TLN001
                                 , orderQuantity = normalizedQuantity
                                 , orderLimitPrice = normalizedPrice
                                 }
@@ -281,7 +281,7 @@ setTicketCount gameId playerId requestedCount serverState = do
                 maxTickets =
                     if ticketPrice <= 0
                         then 0
-                        else balanceOf (gameHoldings (runningState runningGame)) entityId' TLN001 `div` ticketPrice
+                        else balanceOf (gameHoldings (runningState runningGame)) entityId' (assetSeriesId TLN001) `div` ticketPrice
                 normalizedCount = max 0 (min requestedCount maxTickets)
                 updatedPlan = currentPlan{planTicketCount = normalizedCount}
                 updatedGame =
@@ -617,11 +617,11 @@ iterateUntilWinner remainingSteps runningGame
     | isJust (gameWinner (runningState runningGame)) = runningGame
     | otherwise = iterateUntilWinner (remainingSteps - 1) (stepRunningGameAt noDeadlineTick runningGame)
 
-currentLotteryAsset :: GameState -> AssetId
+currentLotteryAsset :: GameState -> SeriesId
 currentLotteryAsset state =
     case gameLotteryMenu state of
         offer : _ -> lotteryOfferAssetId offer
-        [] -> TLN101
+        [] -> assetSeriesId TLN101
 
 currentTicketPrice :: GameState -> Int
 currentTicketPrice state =

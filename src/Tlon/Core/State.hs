@@ -1,7 +1,7 @@
 module Tlon.Core.State (
-    AssetLedger,
     GameState (..),
     Holdings,
+    PositionLedger,
     RoundInputs (..),
     SeriesCatalog,
     adjustBalance,
@@ -20,9 +20,9 @@ import qualified Data.Map.Strict as Map
 import Tlon.Core.Event
 import Tlon.Core.Types
 
-type AssetLedger = Map AssetId Quantity
+type PositionLedger = Map SeriesId Quantity
 
-type Holdings = Map EntityId AssetLedger
+type Holdings = Map EntityId PositionLedger
 
 type SeriesCatalog = Map SeriesId InstrumentSeries
 
@@ -47,22 +47,22 @@ data RoundInputs = RoundInputs
     }
     deriving (Eq, Show)
 
-emptyLedger :: AssetLedger
+emptyLedger :: PositionLedger
 emptyLedger = Map.empty
 
-balanceOf :: Holdings -> EntityId -> AssetId -> Quantity
-balanceOf holdings entity asset =
+balanceOf :: Holdings -> EntityId -> SeriesId -> Quantity
+balanceOf holdings entity seriesId =
     case Map.lookup entity holdings of
         Nothing -> 0
-        Just ledger -> Map.findWithDefault 0 asset ledger
+        Just ledger -> Map.findWithDefault 0 seriesId ledger
 
-adjustBalance :: EntityId -> AssetId -> Quantity -> Holdings -> Holdings
-adjustBalance entity asset delta holdings =
+adjustBalance :: EntityId -> SeriesId -> Quantity -> Holdings -> Holdings
+adjustBalance entity seriesId delta holdings =
     let oldLedger = Map.findWithDefault emptyLedger entity holdings
-        newBalance = Map.findWithDefault 0 asset oldLedger + delta
+        newBalance = Map.findWithDefault 0 seriesId oldLedger + delta
         newLedger
-            | newBalance == 0 = Map.delete asset oldLedger
-            | otherwise = Map.insert asset newBalance oldLedger
+            | newBalance == 0 = Map.delete seriesId oldLedger
+            | otherwise = Map.insert seriesId newBalance oldLedger
      in if Map.null newLedger
             then Map.delete entity holdings
             else Map.insert entity newLedger holdings
@@ -73,7 +73,7 @@ seriesForAsset state assetId =
 
 assetIdForSeries :: GameState -> SeriesId -> Maybe AssetId
 assetIdForSeries state seriesId =
-    instrumentSeriesAssetId <$> Map.lookup seriesId (gameSeriesCatalog state)
+    instrumentSeriesBaseAssetId =<< Map.lookup seriesId (gameSeriesCatalog state)
 
 setEntityAlive :: EntityId -> Bool -> Map EntityId Entity -> Map EntityId Entity
 setEntityAlive entityId' aliveFlag =

@@ -51,7 +51,7 @@ renderLotteryOffer offer =
     ++ " paying "
     ++ show (lotteryOfferPayoutQuantity offer)
 
-renderLedger :: Map.Map AssetId Quantity -> String
+renderLedger :: Map.Map SeriesId Quantity -> String
 renderLedger ledger =
   if Map.null ledger
     then "{}"
