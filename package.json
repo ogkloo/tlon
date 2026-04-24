@@ -1,0 +1,13 @@
+{
+  "name": "tlon",
+  "private": true,
+  "scripts": {
+    "build:agentation": "./scripts/build-agentation.sh"
+  },
+  "devDependencies": {
+    "agentation": "3.0.2",
+    "esbuild": "0.28.0",
+    "react": "19.2.5",
+    "react-dom": "19.2.5"
+  }
+}

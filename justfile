@@ -12,11 +12,11 @@ build:
 cli:
   cabal run tlon
 
-web port="8080" debug="":
-  cabal run tlon-web -- --port {{port}} {{debug}}
+web port="8080":
+  ./scripts/run-web.sh --port {{port}}
 
-web-watch port="8080" debug="":
-  watchexec -r --watch app --watch src --watch test --watch static --watch tlon.cabal --watch flake.nix --watch scripts --exts hs,cabal,nix,md,js,sh --ignore dist-newstyle -- ./scripts/run-web-watch.sh --port {{port}} {{debug}}
+web-watch port="8080":
+  watchexec -r --watch app --watch src --watch test --watch static --watch client --watch package.json --watch package-lock.json --watch tlon.cabal --watch flake.nix --watch scripts --exts hs,cabal,nix,md,js,jsx,json,sh --ignore dist-newstyle --ignore static/agentation.bundle.js -- ./scripts/run-web-watch.sh --port {{port}}
 
 test-watch:
   watchexec -r --exts hs,cabal,nix --ignore dist-newstyle -- just test

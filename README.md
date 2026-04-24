@@ -64,23 +64,26 @@ What those targets map to:
 
 ## Web Development
 
-The browser-facing implementation is now a server-rendered web app built from the same Haskell package.
+The browser-facing implementation is a server-rendered web app built from the same Haskell package.
 
-Common local commands:
+Common dev-mode commands:
 
 ```sh
 just web 8080
 just web-watch 8080
-just web-watch 8080 --debug
 ```
 
-What those do:
+In dev mode, the public server is a local proxy. `just web 8080` builds the local Agentation bundle, starts the Haskell `tlon-web` backend on port 8081, and starts the proxy on `http://127.0.0.1:8080`. Open the proxy URL, not the backend URL.
 
-- `just web 8080`: run the web server once
-- `just web-watch 8080`: rebuild and restart the server when Haskell, static, or script files change
-- `just web-watch 8080 --debug`: same as above, but enables debug-only controls such as `Reset All Games`
+`just web-watch 8080` rebuilds and restarts that same proxy-backed dev server when Haskell, static, client, package, or script files change.
 
-The web server defaults to `http://127.0.0.1:8080`.
+The proxy serves the local Agentation bundle and injects its mount into HTML responses. This keeps Agentation out of the Haskell app code while still making it available during local development.
+
+To intentionally run the plain packaged web app without the dev proxy, use Cabal directly:
+
+```sh
+cabal run tlon-web -- --port 8080
+```
 
 Current web flow:
 
