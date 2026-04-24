@@ -31,6 +31,11 @@ renderIndexPage debugEnabled games =
                     h2_ "Start Match"
                     form_ [method_ "post", action_ "/games", class_ "control-stack"] $ do
                         label_ [class_ "control-label"] $ do
+                            span_ "Scenario"
+                            select_ [name_ "scenario"] $ do
+                                option_ [value_ "default"] "Default market game"
+                                option_ [value_ "guaranteed-lottery"] "Guaranteed TLN001 lottery"
+                        label_ [class_ "control-label"] $ do
                             span_ "Your Name"
                             input_ [type_ "text", name_ "playerName", value_ "Player 1", maxlength_ "32"]
                         label_ [class_ "control-label"] $ do
@@ -42,7 +47,7 @@ renderIndexPage debugEnabled games =
                         label_ [class_ "control-label"] $ do
                             span_ "Seconds Per Round"
                             input_ [type_ "number", name_ "roundTimeLimitSeconds", min_ "0", max_ "300", value_ "0"]
-                        p_ [class_ "control-note"] "Defaults to one human trader with three NPC counterparties."
+                        p_ [class_ "control-note"] "The guaranteed lottery scenario ignores NPCs and market making."
                         button_ [type_ "submit"] "Create Lobby"
         section_ [class_ "band"] $ do
             div_ [class_ "wrap"] $ do
@@ -118,42 +123,44 @@ renderGameShell debugEnabled runningGame maybePlayer maybeSecondsRemaining =
                                     $ button_ [type_ "submit", class_ "secondary-button"] "Reset Game"
                 section_ [class_ "band"] $
                     div_ [class_ "wrap dashboard-grid"] $ do
-                        case maybePlayer of
-                            Nothing ->
-                                div_ [class_ "panel dashboard-main"] $ do
-                                    h2_ "Observer"
-                                    p_ "Open a player link to trade from this dashboard."
-                                    participantsTable runningGame
-                            Just participant -> do
-                                div_ [class_ "panel dashboard-main"] $ do
-                                    h2_ "Trade"
-                                    playerActionsPanel runningGame participant
-                                div_ [class_ "panel"] $ do
-                                    h2_ "Inventory"
-                                    playerInventoryPanel runningGame participant
-                        div_ [class_ "panel"] $ do
-                            h2_ "Activity"
-                            maybe (p_ "No lottery activity last round.") renderLotteryResultsSummary report
-                        div_ [class_ "panel"] $ do
-                            h2_ "Markets"
-                            tradingMarketsPanel state
-                        div_ [class_ "panel"] $ do
-                            h2_ "Round"
-                            submissionStatusPanel runningGame maybePlayer maybeSecondsRemaining
-                        div_ [class_ "panel"] $ do
-                            h2_ "Latest Report"
-                            maybe (p_ "No rounds resolved yet.") renderReportSummary report
-                        div_ [class_ "panel"] $ do
-                            h2_ "Offerings"
-                            activeOfferingsPanel state
-                        div_ [class_ "panel"] $ do
-                            h2_ "History"
-                            historyList (runningHistory runningGame)
-                        if debugEnabled
-                            then div_ [class_ "panel"] $ do
-                                h2_ "Debug"
-                                roundControls runningGame
-                            else mempty
+                        div_ [class_ "dashboard-row dashboard-primary"] $ do
+                            case maybePlayer of
+                                Nothing ->
+                                    div_ [class_ "panel dashboard-main"] $ do
+                                        h2_ "Observer"
+                                        p_ "Open a player link to trade from this dashboard."
+                                        participantsTable runningGame
+                                Just participant -> do
+                                    div_ [class_ "panel dashboard-main"] $ do
+                                        h2_ "Trade"
+                                        playerActionsPanel runningGame participant
+                                    div_ [class_ "panel dashboard-side"] $ do
+                                        h2_ "Inventory"
+                                        playerInventoryPanel runningGame participant
+                        div_ [class_ "dashboard-row dashboard-secondary"] $ do
+                            div_ [class_ "panel landscape-card"] $ do
+                                h2_ "Activity"
+                                maybe (p_ "No lottery activity last round.") renderLotteryResultsSummary report
+                            div_ [class_ "panel landscape-card"] $ do
+                                h2_ "Markets"
+                                tradingMarketsPanel state
+                            div_ [class_ "panel landscape-card"] $ do
+                                h2_ "Round"
+                                submissionStatusPanel runningGame maybePlayer maybeSecondsRemaining
+                            div_ [class_ "panel landscape-card"] $ do
+                                h2_ "Latest Report"
+                                maybe (p_ "No rounds resolved yet.") renderReportSummary report
+                            div_ [class_ "panel landscape-card"] $ do
+                                h2_ "Offerings"
+                                activeOfferingsPanel state
+                            div_ [class_ "panel landscape-card"] $ do
+                                h2_ "History"
+                                historyList (runningHistory runningGame)
+                            if debugEnabled
+                                then div_ [class_ "panel landscape-card"] $ do
+                                    h2_ "Debug"
+                                    roundControls runningGame
+                                else mempty
 
 renderLobbyShell :: Bool -> RunningGame -> Maybe HumanPlayer -> Html ()
 renderLobbyShell debugEnabled runningGame maybePlayer =
@@ -253,11 +260,16 @@ css =
         , "body { margin: 0; }"
         , ".band { padding: 24px 0; border-top: 1px solid #d9d2c7; }"
         , ".hero { background: #efe6d2; border-top: 0; }"
-        , ".wrap { max-width: 1120px; margin: 0 auto; padding: 0 20px; }"
+        , ".wrap { max-width: 1360px; margin: 0 auto; padding: 0 20px; }"
         , ".hero-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(320px, 0.8fr); gap: 24px; align-items: start; }"
         , ".grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }"
-        , ".dashboard-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(280px, 0.8fr); gap: 16px; align-items: start; }"
-        , ".dashboard-main { grid-row: span 2; }"
+        , ".dashboard-grid { display: grid; gap: 16px; align-items: start; }"
+        , ".dashboard-row { display: grid; gap: 16px; align-items: start; }"
+        , ".dashboard-primary { grid-template-columns: minmax(0, 1.6fr) minmax(260px, 0.7fr); }"
+        , ".dashboard-secondary { grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); }"
+        , ".dashboard-main { min-width: 0; }"
+        , ".dashboard-side { min-width: 0; }"
+        , ".landscape-card { min-height: 140px; }"
         , ".section-stack { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }"
         , ".panel { background: #fbfaf7; border: 1px solid #d9d2c7; border-radius: 8px; padding: 16px; }"
         , ".topbar { display: flex; justify-content: space-between; gap: 16px; align-items: end; flex-wrap: wrap; }"
@@ -275,15 +287,19 @@ css =
         , ".status-line { margin: 0 0 10px; color: #50483d; }"
         , ".status-line strong { color: #141414; }"
         , ".actions-list { display: grid; gap: 10px; }"
+        , ".trade-card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 180px)); gap: 10px; align-items: stretch; }"
         , ".inline-fieldset { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) auto; gap: 10px; align-items: end; }"
         , ".inline-fieldset.compact { grid-template-columns: minmax(0, 1fr) auto; }"
         , ".inline-fieldset select, .inline-fieldset input { width: 100%; box-sizing: border-box; border: 1px solid #cdbfae; border-radius: 6px; padding: 10px 12px; font: inherit; background: #fff; }"
-        , ".trade-row { display: grid; grid-template-columns: minmax(0, 1fr) 110px auto auto; gap: 10px; align-items: end; }"
-        , ".offering-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; }"
+        , ".trade-row, .offering-row { display: grid; min-height: 170px; gap: 10px; align-content: space-between; background: #f7f2ea; border: 1px solid #e0d7ca; border-radius: 8px; padding: 12px; }"
+        , ".trade-row .control-label input { width: 100%; box-sizing: border-box; border: 1px solid #cdbfae; border-radius: 6px; padding: 10px 12px; font: inherit; background: #fff; }"
         , ".trade-series { display: grid; gap: 3px; color: #50483d; }"
         , ".trade-series strong { color: #141414; }"
+        , ".card-actions { display: flex; gap: 8px; flex-wrap: wrap; }"
+        , ".card-actions button { flex: 1 1 110px; }"
         , ".market-summary summary { cursor: pointer; font-weight: 600; color: #50483d; }"
-        , ".market-summary .data-table { margin-top: 10px; }"
+        , ".market-summary .data-table { margin-top: 6px; }"
+        , ".market-table th, .market-table td { padding: 6px 8px; }"
         , ".lede { margin: 8px 0 0; color: #50483d; }"
         , ".button, button { display: inline-block; background: #1f6f5f; color: #fff; border: 0; border-radius: 6px; padding: 10px 14px; font: inherit; text-decoration: none; cursor: pointer; }"
         , ".button.secondary { background: #45332b; }"
@@ -305,7 +321,7 @@ css =
         , ".tag.dead { background: #3f2d28; color: #fff; }"
         , ".compact-list { padding-left: 18px; }"
         , ".compact-list li { margin-bottom: 6px; }"
-        , "@media (max-width: 860px) { .hero-grid, .dashboard-grid { grid-template-columns: 1fr; } .dashboard-main { grid-row: auto; } .control-row.triple, .inline-fieldset, .inline-fieldset.compact, .trade-row, .offering-row { grid-template-columns: 1fr; } }"
+        , ".trade-row, .offering-row { display: grid; min-height: 170px; gap: 10px; align-content: space-between; background: #f7f2ea; border: 1px solid #e0d7ca; border-radius: 8px; padding: 12px; }"
         ]
 
 reloadScript :: Text.Text
@@ -342,6 +358,7 @@ syncScript =
         , "  var pollInFlight = false;"
         , "  var interactionUntil = 0;"
         , "  var interactionWindowMs = 1500;"
+        , "  var openDetailsBeforeSwap = [];"
         , "  function getShell() { return document.getElementById('game-shell'); }"
         , "  function isEditableElement(node) {"
         , "    return !!(node && node.closest && node.closest('input, select, textarea, [contenteditable=\"true\"]'));"
@@ -356,9 +373,31 @@ syncScript =
         , "  function htmxBusy() {"
         , "    return !!document.querySelector('.htmx-request');"
         , "  }"
+        , "  function openDetailsLabels(shell) {"
+        , "    return Array.prototype.map.call(shell.querySelectorAll('details[open]'), function (details) {"
+        , "      var summary = details.querySelector('summary');"
+        , "      return summary ? summary.textContent : null;"
+        , "    }).filter(Boolean);"
+        , "  }"
+        , "  function restoreOpenDetails(shell, labels) {"
+        , "    labels.forEach(function (label) {"
+        , "      Array.prototype.forEach.call(shell.querySelectorAll('details'), function (details) {"
+        , "        var summary = details.querySelector('summary');"
+        , "        if (summary && summary.textContent === label) { details.open = true; }"
+        , "      });"
+        , "    });"
+        , "  }"
         , "  function replaceShell(html) {"
         , "    var shell = getShell();"
-        , "    if (shell && shell.outerHTML !== html) { shell.outerHTML = html; }"
+        , "    if (shell && shell.outerHTML !== html) {"
+        , "      var openLabels = openDetailsLabels(shell);"
+        , "      shell.outerHTML = html;"
+        , "      var nextShell = getShell();"
+        , "      if (nextShell) {"
+        , "        restoreOpenDetails(nextShell, openLabels);"
+        , "        if (window.htmx && window.htmx.process) { window.htmx.process(nextShell); }"
+        , "      }"
+        , "    }"
         , "  }"
         , "  function poll() {"
         , "    var shell = getShell();"
@@ -372,6 +411,22 @@ syncScript =
         , "      .catch(function () {})"
         , "      .finally(function () { pollInFlight = false; window.setTimeout(poll, 1000); });"
         , "  }"
+        , "  function shouldPreserveDetails(event) {"
+        , "    var source = event.detail && event.detail.elt;"
+        , "    return !!(source && source.closest && source.closest('[data-preserve-details=\"true\"]'));"
+        , "  }"
+        , "  document.addEventListener('htmx:beforeRequest', function (event) {"
+        , "    var shell = getShell();"
+        , "    openDetailsBeforeSwap = shell && shouldPreserveDetails(event) ? openDetailsLabels(shell) : [];"
+        , "  });"
+        , "  document.addEventListener('htmx:afterSwap', function () {"
+        , "    if (openDetailsBeforeSwap.length === 0) { return; }"
+        , "    window.setTimeout(function () {"
+        , "      var shell = getShell();"
+        , "      if (shell) { restoreOpenDetails(shell, openDetailsBeforeSwap); }"
+        , "      openDetailsBeforeSwap = [];"
+        , "    }, 0);"
+        , "  });"
         , "  document.addEventListener('focusin', function (event) { if (isEditableElement(event.target)) { markInteraction(); } });"
         , "  document.addEventListener('input', function (event) { if (isEditableElement(event.target)) { markInteraction(); } });"
         , "  document.addEventListener('change', function (event) { if (isEditableElement(event.target)) { markInteraction(); } });"
@@ -534,7 +589,7 @@ limitOrderButtons runningGame actionBase =
     let seriesIds = tradableSeriesIds (runningState runningGame)
      in if null seriesIds
             then p_ "No TLN001-quoted series are listed yet."
-            else div_ [class_ "actions-list"] $ mapM_ (renderSeriesTradeForm actionBase) seriesIds
+            else div_ [class_ "trade-card-grid"] $ mapM_ (renderSeriesTradeForm actionBase) seriesIds
 
 renderSeriesTradeForm :: String -> SeriesId -> Html ()
 renderSeriesTradeForm actionBase seriesId =
@@ -545,6 +600,7 @@ renderSeriesTradeForm actionBase seriesId =
         , makeAttribute "hx-post" (pathText (actionBase ++ "/orders"))
         , makeAttribute "hx-target" "#game-shell"
         , makeAttribute "hx-swap" "outerHTML"
+        , makeAttribute "data-preserve-details" "true"
         ]
         $ do
             input_ [type_ "hidden", name_ "seriesId", value_ (Text.pack seriesId)]
@@ -564,7 +620,7 @@ offeringPurchaseForms runningGame participant plan =
         offerings = gameActiveOfferings (runningState runningGame)
      in if null offerings
             then p_ "No active offerings are available."
-            else div_ [class_ "actions-list"] $ mapM_ (renderOfferingPurchaseForm actionBase plan) offerings
+            else div_ [class_ "trade-card-grid"] $ mapM_ (renderOfferingPurchaseForm actionBase plan) offerings
 
 renderOfferingPurchaseForm :: String -> PlayerRoundPlan -> InstrumentOffering -> Html ()
 renderOfferingPurchaseForm actionBase plan offering =
@@ -577,6 +633,7 @@ renderOfferingPurchaseForm actionBase plan offering =
             , makeAttribute "hx-post" (pathText (actionBase ++ "/offerings"))
             , makeAttribute "hx-target" "#game-shell"
             , makeAttribute "hx-swap" "outerHTML"
+            , makeAttribute "data-preserve-details" "true"
             ]
             $ do
                 input_ [type_ "hidden", name_ "seriesId", value_ (Text.pack seriesId)]
@@ -643,6 +700,7 @@ stagedOrdersTable runningGame participant =
                                                 , makeAttribute "hx-post" (pathText (actionBase ++ "/orders/" ++ showOrderId (orderId order) ++ "/delete"))
                                                 , makeAttribute "hx-target" "#game-shell"
                                                 , makeAttribute "hx-swap" "outerHTML"
+                                                , makeAttribute "data-preserve-details" "true"
                                                 ]
                                                 $ button_ [type_ "submit", class_ "secondary-button"] "Remove"
                                         else mempty
@@ -743,7 +801,7 @@ renderMarketSummary market =
         summary_ (toHtml (marketName market <> " — " <> show (length (marketPairs market)) <> " pairs"))
         if null (marketPairs market)
             then p_ "No listed pairs."
-            else table_ [class_ "data-table"] $ do
+            else table_ [class_ "data-table market-table"] $ do
                 thead_ $
                     tr_ $ do
                         th_ "Series"
@@ -797,6 +855,7 @@ marketRuleEditor runningGame maybePlayer market =
             , makeAttribute "hx-post" (pathText (scopedMarketRulesPath runningGame maybePlayer market))
             , makeAttribute "hx-target" "#game-shell"
             , makeAttribute "hx-swap" "outerHTML"
+            , makeAttribute "data-preserve-details" "true"
             ]
             $ div_ [class_ "inline-fieldset compact"]
             $ do
