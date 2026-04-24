@@ -132,8 +132,8 @@ renderGameShell debugEnabled runningGame maybePlayer maybeSecondsRemaining =
                                     h2_ "Inventory"
                                     playerInventoryPanel runningGame participant
                         div_ [class_ "panel"] $ do
-                            h2_ "Offerings"
-                            activeOfferingsPanel state
+                            h2_ "Activity"
+                            maybe (p_ "No lottery activity last round.") renderLotteryResultsSummary report
                         div_ [class_ "panel"] $ do
                             h2_ "Markets"
                             tradingMarketsPanel state
@@ -144,8 +144,8 @@ renderGameShell debugEnabled runningGame maybePlayer maybeSecondsRemaining =
                             h2_ "Latest Report"
                             maybe (p_ "No rounds resolved yet.") renderReportSummary report
                         div_ [class_ "panel"] $ do
-                            h2_ "Activity"
-                            maybe (p_ "No lottery activity last round.") renderLotteryResultsSummary report
+                            h2_ "Offerings"
+                            activeOfferingsPanel state
                         div_ [class_ "panel"] $ do
                             h2_ "History"
                             historyList (runningHistory runningGame)
@@ -278,6 +278,12 @@ css =
         , ".inline-fieldset { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) auto; gap: 10px; align-items: end; }"
         , ".inline-fieldset.compact { grid-template-columns: minmax(0, 1fr) auto; }"
         , ".inline-fieldset select, .inline-fieldset input { width: 100%; box-sizing: border-box; border: 1px solid #cdbfae; border-radius: 6px; padding: 10px 12px; font: inherit; background: #fff; }"
+        , ".trade-row { display: grid; grid-template-columns: minmax(0, 1fr) 110px auto auto; gap: 10px; align-items: end; }"
+        , ".offering-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; }"
+        , ".trade-series { display: grid; gap: 3px; color: #50483d; }"
+        , ".trade-series strong { color: #141414; }"
+        , ".market-summary summary { cursor: pointer; font-weight: 600; color: #50483d; }"
+        , ".market-summary .data-table { margin-top: 10px; }"
         , ".lede { margin: 8px 0 0; color: #50483d; }"
         , ".button, button { display: inline-block; background: #1f6f5f; color: #fff; border: 0; border-radius: 6px; padding: 10px 14px; font: inherit; text-decoration: none; cursor: pointer; }"
         , ".button.secondary { background: #45332b; }"
@@ -299,7 +305,7 @@ css =
         , ".tag.dead { background: #3f2d28; color: #fff; }"
         , ".compact-list { padding-left: 18px; }"
         , ".compact-list li { margin-bottom: 6px; }"
-        , "@media (max-width: 860px) { .hero-grid, .dashboard-grid { grid-template-columns: 1fr; } .dashboard-main { grid-row: auto; } .control-row.triple { grid-template-columns: 1fr; } .inline-fieldset, .inline-fieldset.compact { grid-template-columns: 1fr; } }"
+        , "@media (max-width: 860px) { .hero-grid, .dashboard-grid { grid-template-columns: 1fr; } .dashboard-main { grid-row: auto; } .control-row.triple, .inline-fieldset, .inline-fieldset.compact, .trade-row, .offering-row { grid-template-columns: 1fr; } }"
         ]
 
 reloadScript :: Text.Text
@@ -507,33 +513,8 @@ playerActionsPanel runningGame participant =
                     <> strong_ (toHtml (show purchaseCount))
             if playerCanEditPlan playerId runningGame
                 then do
-                    h3_ "Limit Order"
-                    form_
-                        [ method_ "post"
-                        , action_ (pathText (actionBase ++ "/orders"))
-                        , class_ "actions-list"
-                        , makeAttribute "hx-post" (pathText (actionBase ++ "/orders"))
-                        , makeAttribute "hx-target" "#game-shell"
-                        , makeAttribute "hx-swap" "outerHTML"
-                        ]
-                        $ div_ [class_ "inline-fieldset"]
-                        $ do
-                            label_ [class_ "control-label"] $ do
-                                span_ "Side"
-                                select_ [name_ "side"] $ do
-                                    option_ [value_ "Buy"] "Buy"
-                                    option_ [value_ "Sell"] "Sell"
-                            label_ [class_ "control-label"] $ do
-                                span_ "Series"
-                                select_ [name_ "seriesId"] $
-                                    mapM_ renderTradableSeriesOption (tradableSeriesIds (runningState runningGame))
-                            label_ [class_ "control-label"] $ do
-                                span_ "Quantity"
-                                input_ [type_ "number", name_ "quantity", min_ "1", value_ "1"]
-                            label_ [class_ "control-label"] $ do
-                                span_ "Price"
-                                input_ [type_ "number", name_ "limitPrice", min_ "1", value_ "1"]
-                            button_ [type_ "submit"] "Add Order"
+                    h3_ "Trade"
+                    limitOrderButtons runningGame actionBase
                     h3_ "Primary Offerings"
                     offeringPurchaseForms runningGame participant plan
                 else p_ "Your orders are locked for this round."
@@ -547,6 +528,35 @@ playerInventoryPanel runningGame participant =
         Just entityId' ->
             let ledger = Map.findWithDefault Map.empty entityId' (gameHoldings (runningState runningGame))
              in holdingsTable (Map.toList ledger)
+
+limitOrderButtons :: RunningGame -> String -> Html ()
+limitOrderButtons runningGame actionBase =
+    let seriesIds = tradableSeriesIds (runningState runningGame)
+     in if null seriesIds
+            then p_ "No TLN001-quoted series are listed yet."
+            else div_ [class_ "actions-list"] $ mapM_ (renderSeriesTradeForm actionBase) seriesIds
+
+renderSeriesTradeForm :: String -> SeriesId -> Html ()
+renderSeriesTradeForm actionBase seriesId =
+    form_
+        [ method_ "post"
+        , action_ (pathText (actionBase ++ "/orders"))
+        , class_ "trade-row"
+        , makeAttribute "hx-post" (pathText (actionBase ++ "/orders"))
+        , makeAttribute "hx-target" "#game-shell"
+        , makeAttribute "hx-swap" "outerHTML"
+        ]
+        $ do
+            input_ [type_ "hidden", name_ "seriesId", value_ (Text.pack seriesId)]
+            input_ [type_ "hidden", name_ "quantity", value_ "1"]
+            div_ [class_ "trade-series"] $ do
+                strong_ (toHtml seriesId)
+                span_ " quoted in TLN001"
+            label_ [class_ "control-label"] $ do
+                span_ "Price"
+                input_ [type_ "number", name_ "limitPrice", min_ "1", value_ "1"]
+            button_ [type_ "submit", name_ "side", value_ "Buy"] "Buy"
+            button_ [type_ "submit", name_ "side", value_ "Sell", class_ "secondary-button"] "Sell"
 
 offeringPurchaseForms :: RunningGame -> HumanPlayer -> PlayerRoundPlan -> Html ()
 offeringPurchaseForms runningGame participant plan =
@@ -563,25 +573,25 @@ renderOfferingPurchaseForm actionBase plan offering =
      in form_
             [ method_ "post"
             , action_ (pathText (actionBase ++ "/offerings"))
-            , class_ "actions-list"
+            , class_ "offering-row"
             , makeAttribute "hx-post" (pathText (actionBase ++ "/offerings"))
             , makeAttribute "hx-target" "#game-shell"
             , makeAttribute "hx-swap" "outerHTML"
             ]
-            $ div_ [class_ "inline-fieldset compact"]
             $ do
                 input_ [type_ "hidden", name_ "seriesId", value_ (Text.pack seriesId)]
-                label_ [class_ "control-label"] $ do
-                    span_ (toHtml (offeringInputLabel offering))
-                    input_ [type_ "number", name_ "quantity", min_ "0", value_ (Text.pack (show stagedQuantity))]
-                button_ [type_ "submit"] "Set Purchase"
+                input_ [type_ "hidden", name_ "quantity", value_ (Text.pack (show (stagedQuantity + 1)))]
+                div_ [class_ "trade-series"] $ do
+                    strong_ (toHtml (instrumentOfferingSeriesId offering))
+                    span_ (" " <> toHtml (offeringInputLabel offering))
+                    span_ [class_ "control-note"] ("Staged: " <> toHtml (show stagedQuantity))
+                button_ [type_ "submit"] "Buy 1"
 
 offeringInputLabel :: InstrumentOffering -> String
 offeringInputLabel offering =
     case instrumentOfferingTerms offering of
         LotteryOffering terms ->
-            instrumentOfferingSeriesId offering
-                ++ " — pay "
+            "pay "
                 ++ show (lotteryOfferingTicketPrice terms)
                 ++ " TLN001 for "
                 ++ show (lotteryOfferingOddsNumerator terms)
@@ -591,10 +601,6 @@ offeringInputLabel offering =
                 ++ show (lotteryOfferingPayoutQuantity terms)
                 ++ " "
                 ++ lotteryOfferingPayoutSeriesId terms
-
-renderTradableSeriesOption :: SeriesId -> Html ()
-renderTradableSeriesOption seriesId =
-    option_ [value_ (Text.pack seriesId)] (toHtml seriesId)
 
 tradableSeriesIds :: GameState -> [SeriesId]
 tradableSeriesIds state =
@@ -726,24 +732,30 @@ overviewList runningGame =
 
 tradingMarketsPanel :: GameState -> Html ()
 tradingMarketsPanel state =
-    let pairs = [(marketName market, baseSeries, quoteSeries) | market <- Map.elems (gameMarkets state), (baseSeries, quoteSeries) <- marketPairs market]
-     in if null pairs
+    let markets = Map.elems (gameMarkets state)
+     in if null markets
+            then p_ "No markets configured."
+            else div_ [class_ "actions-list"] $ mapM_ renderMarketSummary markets
+
+renderMarketSummary :: Market -> Html ()
+renderMarketSummary market =
+    details_ [class_ "market-summary"] $ do
+        summary_ (toHtml (marketName market <> " — " <> show (length (marketPairs market)) <> " pairs"))
+        if null (marketPairs market)
             then p_ "No listed pairs."
             else table_ [class_ "data-table"] $ do
                 thead_ $
                     tr_ $ do
-                        th_ "Market"
                         th_ "Series"
                         th_ "Quote"
                 tbody_ $
                     mapM_
-                        ( \(marketName', baseSeries, quoteSeries) ->
+                        ( \(baseSeries, quoteSeries) ->
                             tr_ $ do
-                                td_ (toHtml marketName')
                                 td_ (toHtml baseSeries)
                                 td_ (toHtml quoteSeries)
                         )
-                        pairs
+                        (marketPairs market)
 
 marketsPanel :: RunningGame -> Maybe HumanPlayer -> Html ()
 marketsPanel runningGame maybePlayer =
