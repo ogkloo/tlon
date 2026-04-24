@@ -46,6 +46,9 @@ main = do
         "lobby can reserve npc seats and start without extra human joins"
         testLobbyNpcSeats
     runTest
+        "guaranteed lottery scenario removes markets and npcs"
+        testGuaranteedLotteryScenario
+    runTest
         "players can stage orders and lottery tickets"
         testPlayerActionStaging
     runTest
@@ -308,7 +311,7 @@ testGovernmentMarketRule = do
 testMarketRuleEditing :: IO ()
 testMarketRuleEditing = do
     let now = fixedTime
-        (gameId, _creatorId, serverState0) = createLobby "Alice" 1 0 Nothing initialServerState
+        (gameId, _creatorId, serverState0) = createLobby DefaultScenario "Alice" 1 0 Nothing initialServerState
         Just serverState1 = startGame now gameId serverState0
         Just runningGame0 = getGame gameId serverState1
         Just market0 = Map.lookup (MarketId 1) (gameMarkets (runningState runningGame0))
@@ -327,7 +330,7 @@ testMarketRuleEditing = do
 testLobbyFlow :: IO ()
 testLobbyFlow = do
     let now = fixedTime
-        (gameId, creatorId, serverState0) = createLobby "Alice" 3 0 Nothing initialServerState
+        (gameId, creatorId, serverState0) = createLobby DefaultScenario "Alice" 3 0 Nothing initialServerState
         Just lobbyGame = getGame gameId serverState0
     assertBool "new lobby is not started yet" (not (runningStarted lobbyGame))
     assertEqual "creator is added to lobby" 1 (length (runningParticipants lobbyGame))
@@ -355,7 +358,7 @@ testLobbyFlow = do
 testLobbyNpcSeats :: IO ()
 testLobbyNpcSeats = do
     let now = fixedTime
-        (gameId, creatorId, serverState0) = createLobby "Alice" 1 2 Nothing initialServerState
+        (gameId, creatorId, serverState0) = createLobby DefaultScenario "Alice" 1 2 Nothing initialServerState
         Just lobbyGame = getGame gameId serverState0
         Just serverState1 = startGame now gameId serverState0
         Just startedGame = getGame gameId serverState1
@@ -365,10 +368,38 @@ testLobbyNpcSeats = do
     assertEqual "creator keeps the first seat" (Just (EntityId 1)) (humanPlayerEntityId =<< getPlayer creatorId startedGame)
     assertBool "npc seat remains computer-controlled" (Map.lookup (EntityId 2) (gameEntities (runningState startedGame)) /= Nothing)
 
+testGuaranteedLotteryScenario :: IO ()
+testGuaranteedLotteryScenario = do
+    let now = fixedTime
+        (gameId, creatorId, serverState0) = createLobby GuaranteedLotteryScenario "Alice" 1 5 Nothing initialServerState
+        Just lobbyGame = getGame gameId serverState0
+        Just serverState1 = startGame now gameId serverState0
+        Just startedGame = getGame gameId serverState1
+        startedState = runningState startedGame
+    assertEqual "scenario is recorded" GuaranteedLotteryScenario (runningScenario startedGame)
+    assertEqual "npc request is ignored" 0 (runningNpcCount lobbyGame)
+    assertEqual "only one human seat is kept" 1 (runningSeatCount lobbyGame)
+    assertEqual "creator keeps the first seat" (Just (EntityId 1)) (humanPlayerEntityId =<< getPlayer creatorId startedGame)
+    assertEqual "government plus one human entity exist" [EntityId 0, EntityId 1] (Map.keys (gameEntities startedState))
+    assertEqual "guaranteed scenario has no markets" Map.empty (gameMarkets startedState)
+    case gameActiveOfferings startedState of
+        [offering] -> do
+            assertEqual "guaranteed offering series matches the terms" (ticketSeriesId 1 1 (assetSeriesId TLN001) 1 1 1 2) (instrumentOfferingSeriesId offering)
+            assertEqual "government issues the guaranteed offering" (EntityId 0) (instrumentOfferingIssuer offering)
+            case instrumentOfferingTerms offering of
+                LotteryOffering terms -> do
+                    assertEqual "ticket pays TLN001" (assetSeriesId TLN001) (lotteryOfferingPayoutSeriesId terms)
+                    assertEqual "ticket costs one TLN001" 1 (lotteryOfferingTicketPrice terms)
+                    assertEqual "ticket has one winning outcome" 1 (lotteryOfferingOddsNumerator terms)
+                    assertEqual "ticket has one total outcome" 1 (lotteryOfferingOddsDenominator terms)
+                    assertEqual "ticket pays two TLN001" 2 (lotteryOfferingPayoutQuantity terms)
+                    assertEqual "ticket lasts one round" 1 (lotteryOfferingDurationRounds terms)
+        offerings -> assertEqual "only the guaranteed offering is active" 1 (length offerings)
+
 testPlayerActionStaging :: IO ()
 testPlayerActionStaging = do
     let now = fixedTime
-        (gameId, aliceId, serverState0) = createLobby "Alice" 2 0 Nothing initialServerState
+        (gameId, aliceId, serverState0) = createLobby DefaultScenario "Alice" 2 0 Nothing initialServerState
         Just (_, serverState1) = joinGame gameId "Bob" serverState0
         Just serverState2 = startGame now gameId serverState1
         offering = firstActiveOfferingForTest gameId serverState2
@@ -391,7 +422,7 @@ testPlayerActionStaging = do
 testSubmittedActionsResolve :: IO ()
 testSubmittedActionsResolve = do
     let now = fixedTime
-        (gameId, aliceId, serverState0) = createLobby "Alice" 2 0 Nothing initialServerState
+        (gameId, aliceId, serverState0) = createLobby DefaultScenario "Alice" 2 0 Nothing initialServerState
         Just (bobId, serverState1) = joinGame gameId "Bob" serverState0
         Just serverState2 = startGame now gameId serverState1
         offering = firstActiveOfferingForTest gameId serverState2
@@ -516,7 +547,7 @@ testLotteryTicketCatalogAndTrading = do
 testManualRoundSubmission :: IO ()
 testManualRoundSubmission = do
     let now = fixedTime
-        (gameId, aliceId, serverState0) = createLobby "Alice" 2 0 Nothing initialServerState
+        (gameId, aliceId, serverState0) = createLobby DefaultScenario "Alice" 2 0 Nothing initialServerState
         Just (bobId, serverState1) = joinGame gameId "Bob" serverState0
         Just serverState2 = startGame now gameId serverState1
         Just startedGame = getGame gameId serverState2
@@ -535,7 +566,7 @@ testManualRoundSubmission = do
 
 testResetAllGames :: IO ()
 testResetAllGames = do
-    let (gameId, _, serverState0) = createLobby "Alice" 2 0 Nothing initialServerState
+    let (gameId, _, serverState0) = createLobby DefaultScenario "Alice" 2 0 Nothing initialServerState
         Just (_, serverState1) = joinGame gameId "Bob" serverState0
         resetState = resetAllGames serverState1
     assertEqual "all games are cleared" [] (listGames resetState)
@@ -546,7 +577,7 @@ testTimedRoundSubmission :: IO ()
 testTimedRoundSubmission = do
     let now = fixedTime
         later = addUTCTime 6 now
-        (gameId, aliceId, serverState0) = createLobby "Alice" 2 0 (Just 5) initialServerState
+        (gameId, aliceId, serverState0) = createLobby DefaultScenario "Alice" 2 0 (Just 5) initialServerState
         Just (_, serverState1) = joinGame gameId "Bob" serverState0
         Just serverState2 = startGame now gameId serverState1
         Just startedGame = getGame gameId serverState2
@@ -607,6 +638,7 @@ testAdvanceGameToEnd = do
         runningGame =
             RunningGame
                 { runningGameId = GameId 1
+                , runningScenario = DefaultScenario
                 , runningConfig = defaultConfig{configRoundGrantQuantity = 0}
                 , runningSeatCount = 1
                 , runningHumanSeatCount = 0
@@ -660,6 +692,7 @@ testAdvanceGameToEndSafetyCap = do
         runningGame =
             RunningGame
                 { runningGameId = GameId 1
+                , runningScenario = DefaultScenario
                 , runningConfig = defaultConfig{configRoundGrantQuantity = 0}
                 , runningSeatCount = 2
                 , runningHumanSeatCount = 0

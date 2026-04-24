@@ -22,6 +22,7 @@ library
     Tlon.Core.Types
     Tlon.Game.Default.Config
     Tlon.Game.Default.Rules
+    Tlon.Game.Default.Scenario
     Tlon.Game.Default.Setup
     Tlon.Game.Default.View
     Tlon.Web.Api

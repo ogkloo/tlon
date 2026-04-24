@@ -2,6 +2,7 @@
 
 module Tlon.Web.State (
     GameId (..),
+    GameScenario (..),
     HumanPlayer (..),
     PlayerId (..),
     PlayerRoundPlan (..),
@@ -45,10 +46,12 @@ import Data.Maybe (isJust)
 import Data.Time.Clock (NominalDiffTime, UTCTime, addUTCTime, diffUTCTime)
 import Tlon.Core.Engine
 import Tlon.Core.Event
+import Tlon.Core.Rules
 import Tlon.Core.State
 import Tlon.Core.Types
 import Tlon.Game.Default.Config
 import Tlon.Game.Default.Rules
+import Tlon.Game.Default.Scenario
 import Tlon.Game.Default.Setup
 
 newtype GameId = GameId Int
@@ -70,8 +73,14 @@ data PlayerRoundPlan = PlayerRoundPlan
     }
     deriving (Eq, Show)
 
+data GameScenario
+    = DefaultScenario
+    | GuaranteedLotteryScenario
+    deriving (Eq, Show)
+
 data RunningGame = RunningGame
     { runningGameId :: GameId
+    , runningScenario :: GameScenario
     , runningConfig :: DefaultConfig
     , runningSeatCount :: Int
     , runningHumanSeatCount :: Int
@@ -120,6 +129,7 @@ createGame config serverState =
         runningGame =
             RunningGame
                 { runningGameId = gameId
+                , runningScenario = DefaultScenario
                 , runningConfig = config'
                 , runningSeatCount = configPlayerCount config'
                 , runningHumanSeatCount = 0
@@ -142,13 +152,14 @@ createGame config serverState =
             }
         )
 
-createLobby :: String -> Int -> Int -> Maybe Int -> ServerState -> (GameId, PlayerId, ServerState)
-createLobby rawName requestedHumanSeats requestedNpcCount maybeRoundTimeLimit serverState =
+createLobby :: GameScenario -> String -> Int -> Int -> Maybe Int -> ServerState -> (GameId, PlayerId, ServerState)
+createLobby scenario rawName requestedHumanSeats requestedNpcCount maybeRoundTimeLimit serverState =
     let humanSeats = normalizeHumanSeatCount requestedHumanSeats
-        npcCount = normalizeNpcCount humanSeats requestedNpcCount
+        npcCount = normalizeNpcCount scenario humanSeats requestedNpcCount
         totalSeats = humanSeats + npcCount
         config' =
-            normalizeConfig
+            normalizeConfigForScenario
+                scenario
                 defaultConfig
                     { configPlayerCount = totalSeats
                     }
@@ -163,6 +174,7 @@ createLobby rawName requestedHumanSeats requestedNpcCount maybeRoundTimeLimit se
         runningGame =
             RunningGame
                 { runningGameId = gameId
+                , runningScenario = scenario
                 , runningConfig = config'
                 , runningSeatCount = totalSeats
                 , runningHumanSeatCount = humanSeats
@@ -174,7 +186,7 @@ createLobby rawName requestedHumanSeats requestedNpcCount maybeRoundTimeLimit se
                 , runningSubmittedPlayers = []
                 , runningRoundPlans = Map.empty
                 , runningNextOrderId = 1
-                , runningState = initialState config'
+                , runningState = initialStateForScenario scenario config'
                 , runningHistory = []
                 }
         games' = Map.insert gameId runningGame (serverGames serverState)
@@ -369,7 +381,7 @@ resetGame now gameId serverState = do
                 then startRunningGame now runningGame
                 else
                     runningGame
-                        { runningState = initialState (runningConfig runningGame)
+                        { runningState = initialStateForScenario (runningScenario runningGame) (runningConfig runningGame)
                         , runningHistory = []
                         , runningSubmittedPlayers = []
                         , runningRoundPlans = Map.empty
@@ -440,20 +452,47 @@ humanSeatCount :: RunningGame -> Int
 humanSeatCount runningGame = runningHumanSeatCount runningGame
 
 normalizeConfig :: DefaultConfig -> DefaultConfig
-normalizeConfig config =
-    config{configPlayerCount = normalizeSeatCount (configPlayerCount config)}
+normalizeConfig = normalizeConfigForScenario DefaultScenario
+
+normalizeConfigForScenario :: GameScenario -> DefaultConfig -> DefaultConfig
+normalizeConfigForScenario scenario config =
+    config{configPlayerCount = normalizeSeatCountForScenario scenario (configPlayerCount config)}
+
+initialStateForScenario :: GameScenario -> DefaultConfig -> GameState
+initialStateForScenario scenario config =
+    case scenario of
+        DefaultScenario -> initialState config
+        GuaranteedLotteryScenario -> guaranteedLotteryState config
+
+roundRulesForScenario :: GameScenario -> DefaultConfig -> RoundRules
+roundRulesForScenario scenario config =
+    case scenario of
+        DefaultScenario -> defaultRoundRules config
+        GuaranteedLotteryScenario ->
+            (defaultRoundRules config)
+                { roundRulesActiveOfferingsForRound = \state _ -> guaranteedLotteryOfferings (findGovernmentId state)
+                }
 
 normalizeHumanSeatCount :: Int -> Int
 normalizeHumanSeatCount humanSeats = max 1 (min 6 humanSeats)
 
 normalizeSeatCount :: Int -> Int
-normalizeSeatCount seatCount = max 2 (min 6 seatCount)
+normalizeSeatCount = normalizeSeatCountForScenario DefaultScenario
 
-normalizeNpcCount :: Int -> Int -> Int
-normalizeNpcCount humanSeats npcCount =
-    let minimumNpcCount = max 0 (2 - humanSeats)
-        maximumNpcCount = max 0 (6 - humanSeats)
-     in max minimumNpcCount (min maximumNpcCount npcCount)
+normalizeSeatCountForScenario :: GameScenario -> Int -> Int
+normalizeSeatCountForScenario scenario seatCount =
+    case scenario of
+        GuaranteedLotteryScenario -> max 1 (min 6 seatCount)
+        DefaultScenario -> max 2 (min 6 seatCount)
+
+normalizeNpcCount :: GameScenario -> Int -> Int -> Int
+normalizeNpcCount scenario humanSeats npcCount =
+    case scenario of
+        GuaranteedLotteryScenario -> 0
+        DefaultScenario ->
+            let minimumNpcCount = max 0 (2 - humanSeats)
+                maximumNpcCount = max 0 (6 - humanSeats)
+             in max minimumNpcCount (min maximumNpcCount npcCount)
 
 normalizeRoundTimeLimit :: Maybe Int -> Maybe Int
 normalizeRoundTimeLimit maybeSeconds =
@@ -515,7 +554,7 @@ startRunningGame now runningGame =
 
 initializeStartedState :: RunningGame -> (GameState, [HumanPlayer])
 initializeStartedState runningGame =
-    let state0 = initialState (runningConfig runningGame)
+    let state0 = initialStateForScenario (runningScenario runningGame) (runningConfig runningGame)
         assignments = zip [1 ..] (runningParticipants runningGame)
         state' = foldl' assignName state0 assignments
         participants' =
@@ -586,7 +625,7 @@ stepRunningGameAt now runningGame
                     }
             actorInputs = defaultActorInputs (autonomousEntityIds runningGame) (runningState runningGame)
             roundInputs = combineRoundInputs playerInputs actorInputs
-            rules = defaultRoundRules (runningConfig runningGame)
+            rules = roundRulesForScenario (runningScenario runningGame) (runningConfig runningGame)
             (state', events) = stepRound rules roundInputs (runningState runningGame)
             reports = [report | RoundResolved report <- events]
             resolvedGame =
@@ -598,10 +637,13 @@ stepRunningGameAt now runningGame
 
 autonomousEntityIds :: RunningGame -> [EntityId]
 autonomousEntityIds runningGame =
-    [ entityId'
-    | entityId' <- livingMortals (runningState runningGame)
-    , entityId' `notElem` humanEntityIds
-    ]
+    case runningScenario runningGame of
+        GuaranteedLotteryScenario -> []
+        DefaultScenario ->
+            [ entityId'
+            | entityId' <- livingMortals (runningState runningGame)
+            , entityId' `notElem` humanEntityIds
+            ]
   where
     humanEntityIds = [entityId' | participant <- runningParticipants runningGame, Just entityId' <- [humanPlayerEntityId participant]]
 

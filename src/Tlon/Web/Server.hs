@@ -48,6 +48,7 @@ runWebServer port debugEnabled = do
                 redirect "/"
 
         post "/games" $ do
+            scenario <- parseGameScenario <$> formStringParamOr "scenario" "default"
             playerName <- formStringParamOr "playerName" "Player"
             playerCount <- formIntParamOr "playerCount" 2
             npcCount <- formIntParamOr "npcCount" 0
@@ -56,7 +57,7 @@ runWebServer port debugEnabled = do
                 atomically $
                     stateTVar stateVar $ \serverState ->
                         let (createdGameId, createdPlayerId, serverState') =
-                                createLobby playerName playerCount npcCount roundTimeLimitSeconds serverState
+                                createLobby scenario playerName playerCount npcCount roundTimeLimitSeconds serverState
                          in ((createdGameId, createdPlayerId), serverState')
             redirect (playerGamePath gameId playerId)
 
@@ -393,6 +394,12 @@ formStringParamOr name fallbackValue =
   where
     handleScottyException :: ScottyException -> ActionM String
     handleScottyException _ = pure fallbackValue
+
+parseGameScenario :: String -> GameScenario
+parseGameScenario rawValue =
+    case rawValue of
+        "guaranteed-lottery" -> GuaranteedLotteryScenario
+        _ -> DefaultScenario
 
 parseSide :: String -> Maybe Side
 parseSide rawValue =
