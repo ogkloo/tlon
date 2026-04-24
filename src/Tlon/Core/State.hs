@@ -5,12 +5,14 @@ module Tlon.Core.State (
     RoundInputs (..),
     SeriesCatalog,
     adjustBalance,
-    assetIdForSeries,
+    baseAssetIdForSeries,
     balanceOf,
     emptyLedger,
     findGovernmentId,
     livingMortals,
     seriesForAsset,
+    seriesOutstandingQuantity,
+    seriesStatus,
     setEntityAlive,
 )
 where
@@ -35,7 +37,7 @@ data GameState = GameState
     , gameSeriesCatalog :: SeriesCatalog
     , gameMarkets :: Map MarketId Market
     , gameHoldings :: Holdings
-    , gameLotteryMenu :: [LotteryOffer]
+    , gameActiveOfferings :: [InstrumentOffering]
     , gamePreviousReport :: Maybe RoundReport
     , gameWinner :: Maybe EntityId
     }
@@ -43,7 +45,7 @@ data GameState = GameState
 
 data RoundInputs = RoundInputs
     { roundOrders :: [Order]
-    , roundLotteryPurchases :: [LotteryPurchase]
+    , roundOfferingPurchases :: [OfferingPurchase]
     }
     deriving (Eq, Show)
 
@@ -71,9 +73,27 @@ seriesForAsset :: GameState -> AssetId -> Maybe InstrumentSeries
 seriesForAsset state assetId =
     Map.lookup (assetSeriesId assetId) (gameSeriesCatalog state)
 
-assetIdForSeries :: GameState -> SeriesId -> Maybe AssetId
-assetIdForSeries state seriesId =
-    instrumentSeriesBaseAssetId =<< Map.lookup seriesId (gameSeriesCatalog state)
+baseAssetIdForSeries :: GameState -> SeriesId -> Maybe AssetId
+baseAssetIdForSeries state seriesId =
+    case instrumentSeriesTerms <$> Map.lookup seriesId (gameSeriesCatalog state) of
+        Just (BaseInstrumentTerms assetId) -> Just assetId
+        _ -> Nothing
+
+seriesOutstandingQuantity :: GameState -> SeriesId -> Quantity
+seriesOutstandingQuantity state seriesId =
+    sum
+        [ max 0 (Map.findWithDefault 0 seriesId ledger)
+        | ledger <- Map.elems (gameHoldings state)
+        ]
+
+seriesStatus :: GameState -> InstrumentSeries -> SeriesStatus
+seriesStatus state series =
+    case instrumentSeriesKind series of
+        BaseSeries -> BaseSeriesStatus
+        _
+            | seriesOutstandingQuantity state (instrumentSeriesId series) == 0 -> SettledSeriesStatus
+            | maybe False (<= gameRoundNumber state) (instrumentSeriesSettlementRound series) -> MaturedSeriesStatus
+            | otherwise -> ActiveSeriesStatus
 
 setEntityAlive :: EntityId -> Bool -> Map EntityId Entity -> Map EntityId Entity
 setEntityAlive entityId' aliveFlag =

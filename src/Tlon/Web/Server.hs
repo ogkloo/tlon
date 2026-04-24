@@ -124,13 +124,13 @@ runWebServer port debugEnabled = do
             gameId <- GameId <$> pathParam "gameId"
             playerId <- PlayerId <$> pathParam "playerId"
             sideText <- formStringParamOr "side" "Buy"
-            assetText <- formStringParamOr "assetId" "TLN101"
+            seriesId <- formStringParamOr "seriesId" (assetSeriesId TLN101)
             quantity <- formIntParamOr "quantity" 1
             limitPrice <- formIntParamOr "limitPrice" 1
-            case (parseSide sideText, parseAssetId assetText) of
-                (Just side, Just assetId) ->
-                    handlePureGameMutation stateVar debugEnabled gameId (Just playerId) (stageLimitOrder gameId playerId side assetId quantity limitPrice)
-                _ -> renderBadRequest stateVar debugEnabled gameId (Just playerId)
+            case parseSide sideText of
+                Just side ->
+                    handlePureGameMutation stateVar debugEnabled gameId (Just playerId) (stageLimitOrder gameId playerId side seriesId quantity limitPrice)
+                Nothing -> renderBadRequest stateVar debugEnabled gameId (Just playerId)
 
         post "/games/:gameId/players/:playerId/orders/:orderId/delete" $ do
             gameId <- GameId <$> pathParam "gameId"
@@ -138,11 +138,12 @@ runWebServer port debugEnabled = do
             orderIdValue <- pathParam "orderId"
             handlePureGameMutation stateVar debugEnabled gameId (Just playerId) (removeStagedOrder gameId playerId (OrderId orderIdValue))
 
-        post "/games/:gameId/players/:playerId/tickets" $ do
+        post "/games/:gameId/players/:playerId/offerings" $ do
             gameId <- GameId <$> pathParam "gameId"
             playerId <- PlayerId <$> pathParam "playerId"
-            ticketCount <- formIntParamOr "ticketCount" 0
-            handlePureGameMutation stateVar debugEnabled gameId (Just playerId) (setTicketCount gameId playerId ticketCount)
+            seriesId <- formStringParamOr "seriesId" ""
+            quantity <- formIntParamOr "quantity" 0
+            handlePureGameMutation stateVar debugEnabled gameId (Just playerId) (setOfferingPurchaseCount gameId playerId seriesId quantity)
 
         post "/games/:gameId/markets/:marketId/rules" $ do
             gameId <- GameId <$> pathParam "gameId"

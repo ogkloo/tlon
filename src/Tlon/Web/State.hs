@@ -29,7 +29,7 @@ module Tlon.Web.State (
     resolveGame,
     roundSecondsRemaining,
     setMarketRuleEnabled,
-    setTicketCount,
+    setOfferingPurchaseCount,
     stageLimitOrder,
     startGame,
     submitTurn,
@@ -48,6 +48,7 @@ import Tlon.Core.Event
 import Tlon.Core.State
 import Tlon.Core.Types
 import Tlon.Game.Default.Config
+import Tlon.Game.Default.Rules
 import Tlon.Game.Default.Setup
 
 newtype GameId = GameId Int
@@ -65,7 +66,7 @@ data HumanPlayer = HumanPlayer
 
 data PlayerRoundPlan = PlayerRoundPlan
     { planOrders :: [Order]
-    , planTicketCount :: Int
+    , planOfferingPurchases :: Map SeriesId Quantity
     }
     deriving (Eq, Show)
 
@@ -109,7 +110,7 @@ emptyRoundPlan :: PlayerRoundPlan
 emptyRoundPlan =
     PlayerRoundPlan
         { planOrders = []
-        , planTicketCount = 0
+        , planOfferingPurchases = Map.empty
         }
 
 createGame :: DefaultConfig -> ServerState -> (GameId, ServerState)
@@ -219,8 +220,8 @@ startGame now gameId serverState = do
             let startedGame = startRunningGame now runningGame
              in pure serverState{serverGames = Map.insert gameId startedGame (serverGames serverState)}
 
-stageLimitOrder :: GameId -> PlayerId -> Side -> AssetId -> Int -> Int -> ServerState -> Maybe ServerState
-stageLimitOrder gameId playerId side asset quantity price serverState = do
+stageLimitOrder :: GameId -> PlayerId -> Side -> SeriesId -> Int -> Int -> ServerState -> Maybe ServerState
+stageLimitOrder gameId playerId side seriesId quantity price serverState = do
     runningGame <- getStartedGame gameId serverState
     participant <- getPlayer playerId runningGame
     if not (playerCanEditPlan playerId runningGame)
@@ -229,7 +230,9 @@ stageLimitOrder gameId playerId side asset quantity price serverState = do
             entityId' <- humanPlayerEntityId participant
             let normalizedQuantity = max 0 quantity
                 normalizedPrice = max 0 price
-            if normalizedQuantity <= 0 || normalizedPrice <= 0 || not (isAbstractAsset asset)
+                quoteSeries = assetSeriesId TLN001
+                pairIsListed = any ((seriesId, quoteSeries) `elem`) (marketPairs <$> Map.elems (gameMarkets (runningState runningGame)))
+            if normalizedQuantity <= 0 || normalizedPrice <= 0 || not pairIsListed
                 then Nothing
                 else
                     let newOrder =
@@ -238,8 +241,8 @@ stageLimitOrder gameId playerId side asset quantity price serverState = do
                                 , orderEntityId = entityId'
                                 , orderMarketId = MarketId 1
                                 , orderSide = side
-                                , orderBaseAsset = assetSeriesId asset
-                                , orderQuoteAsset = assetSeriesId TLN001
+                                , orderBaseAsset = seriesId
+                                , orderQuoteAsset = quoteSeries
                                 , orderQuantity = normalizedQuantity
                                 , orderLimitPrice = normalizedPrice
                                 }
@@ -268,27 +271,29 @@ removeStagedOrder gameId playerId targetOrderId serverState = do
                         }
              in pure serverState{serverGames = Map.insert gameId updatedGame (serverGames serverState)}
 
-setTicketCount :: GameId -> PlayerId -> Int -> ServerState -> Maybe ServerState
-setTicketCount gameId playerId requestedCount serverState = do
+setOfferingPurchaseCount :: GameId -> PlayerId -> SeriesId -> Int -> ServerState -> Maybe ServerState
+setOfferingPurchaseCount gameId playerId seriesId requestedCount serverState = do
     runningGame <- getStartedGame gameId serverState
     participant <- getPlayer playerId runningGame
     if not (playerCanEditPlan playerId runningGame)
         then Nothing
         else do
-            entityId' <- humanPlayerEntityId participant
+            _ <- humanPlayerEntityId participant
             let currentPlan = getPlayerPlan playerId runningGame
-                ticketPrice = currentTicketPrice (runningState runningGame)
-                maxTickets =
-                    if ticketPrice <= 0
-                        then 0
-                        else balanceOf (gameHoldings (runningState runningGame)) entityId' (assetSeriesId TLN001) `div` ticketPrice
-                normalizedCount = max 0 (min requestedCount maxTickets)
-                updatedPlan = currentPlan{planTicketCount = normalizedCount}
+                offeredSeries = instrumentOfferingSeriesId <$> gameActiveOfferings (runningState runningGame)
+                normalizedCount = max 0 requestedCount
+                purchases' =
+                    if normalizedCount == 0
+                        then Map.delete seriesId (planOfferingPurchases currentPlan)
+                        else Map.insert seriesId normalizedCount (planOfferingPurchases currentPlan)
+                updatedPlan = currentPlan{planOfferingPurchases = purchases'}
                 updatedGame =
                     runningGame
                         { runningRoundPlans = Map.insert playerId updatedPlan (runningRoundPlans runningGame)
                         }
-             in pure serverState{serverGames = Map.insert gameId updatedGame (serverGames serverState)}
+            if seriesId `elem` offeredSeries
+                then pure serverState{serverGames = Map.insert gameId updatedGame (serverGames serverState)}
+                else Nothing
 
 setMarketRuleEnabled :: GameId -> Maybe PlayerId -> MarketId -> MarketRule -> Bool -> ServerState -> Maybe ServerState
 setMarketRuleEnabled gameId maybePlayerId targetMarketId targetRule enabled serverState = do
@@ -574,9 +579,15 @@ stepRunningGameAt :: UTCTime -> RunningGame -> RunningGame
 stepRunningGameAt now runningGame
     | isJust (gameWinner (runningState runningGame)) = runningGame
     | otherwise =
-        let submittedOrders = concatMap (planOrders . (`getPlayerPlan` runningGame)) (runningSubmittedPlayers runningGame)
-            submittedPurchases = collectSubmittedPurchases runningGame
-            (state', events) = stepRound (runningConfig runningGame) (RoundInputs submittedOrders submittedPurchases) (runningState runningGame)
+        let playerInputs =
+                RoundInputs
+                    { roundOrders = concatMap (planOrders . (`getPlayerPlan` runningGame)) (runningSubmittedPlayers runningGame)
+                    , roundOfferingPurchases = collectSubmittedPurchases runningGame
+                    }
+            actorInputs = defaultActorInputs (autonomousEntityIds runningGame) (runningState runningGame)
+            roundInputs = combineRoundInputs playerInputs actorInputs
+            rules = defaultRoundRules (runningConfig runningGame)
+            (state', events) = stepRound rules roundInputs (runningState runningGame)
             reports = [report | RoundResolved report <- events]
             resolvedGame =
                 runningGame
@@ -585,19 +596,38 @@ stepRunningGameAt now runningGame
                     }
          in resetRoundWindow now resolvedGame
 
-collectSubmittedPurchases :: RunningGame -> [LotteryPurchase]
+autonomousEntityIds :: RunningGame -> [EntityId]
+autonomousEntityIds runningGame =
+    [ entityId'
+    | entityId' <- livingMortals (runningState runningGame)
+    , entityId' `notElem` humanEntityIds
+    ]
+  where
+    humanEntityIds = [entityId' | participant <- runningParticipants runningGame, Just entityId' <- [humanPlayerEntityId participant]]
+
+combineRoundInputs :: RoundInputs -> RoundInputs -> RoundInputs
+combineRoundInputs left right =
+    RoundInputs
+        { roundOrders = roundOrders left ++ roundOrders right
+        , roundOfferingPurchases = roundOfferingPurchases left ++ roundOfferingPurchases right
+        }
+
+collectSubmittedPurchases :: RunningGame -> [OfferingPurchase]
 collectSubmittedPurchases runningGame =
     foldr collectOne [] (runningSubmittedPlayers runningGame)
   where
-    currentAsset = currentLotteryAsset (runningState runningGame)
+    activeSeries = instrumentOfferingSeriesId <$> gameActiveOfferings (runningState runningGame)
     collectOne playerId acc =
         case getPlayer playerId runningGame >>= humanPlayerEntityId of
             Nothing -> acc
             Just entityId' ->
-                let ticketCount = planTicketCount (getPlayerPlan playerId runningGame)
-                 in if ticketCount <= 0
-                        then acc
-                        else LotteryPurchase entityId' currentAsset ticketCount : acc
+                let purchases =
+                        [ OfferingPurchase entityId' seriesId quantity
+                        | (seriesId, quantity) <- Map.toList (planOfferingPurchases (getPlayerPlan playerId runningGame))
+                        , seriesId `elem` activeSeries
+                        , quantity > 0
+                        ]
+                 in purchases ++ acc
 
 iterateGameSteps :: Int -> RunningGame -> RunningGame
 iterateGameSteps stepCount runningGame
@@ -616,18 +646,6 @@ iterateUntilWinner remainingSteps runningGame
     | remainingSteps <= 0 = runningGame
     | isJust (gameWinner (runningState runningGame)) = runningGame
     | otherwise = iterateUntilWinner (remainingSteps - 1) (stepRunningGameAt noDeadlineTick runningGame)
-
-currentLotteryAsset :: GameState -> SeriesId
-currentLotteryAsset state =
-    case gameLotteryMenu state of
-        offer : _ -> lotteryOfferAssetId offer
-        [] -> assetSeriesId TLN101
-
-currentTicketPrice :: GameState -> Int
-currentTicketPrice state =
-    case gameLotteryMenu state of
-        offer : _ -> lotteryOfferTicketPrice offer
-        [] -> 1
 
 noDeadlineTick :: UTCTime
 noDeadlineTick = read "1970-01-01 00:00:00 UTC"

@@ -1,332 +1,140 @@
-# Tlon: Obligatory Lottery Markets
+# Tlon: Instrument Market Testbed
 
-Tlon is a game about lotteries and markets on top of lotteries. The basic idea is that there are a wide variety of tokens available for purchase and sale and players compete (both with each other and with NPCs) to "survive" (i.e. remain in at least one approved market\*) until the end of the game. Players (humans) and NPCs are collectively referred to _entities_. The Government owns and controls a specific market with a mildly negative EV lottery required to participate in it. 
+Tlon is currently a Haskell game engine and web testbed for markets over fungible instrument series. The near-term goal is not a polished game loop; it is to make the core market model feel clear and inspectable.
 
-\* Approved markets are, by default, Government run. But in theory they could be others, really it's just a specific list of markets.
+The central model is:
 
-My long term plan is for the client to be a web app with a backend server running elsewhere.
+- entities hold positions in fungible `SeriesId`s
+- markets list tradable series pairs
+- orders trade series against other series
+- offerings issue new instrument series into the position ledger
+- settlement resolves matured instrument series according to their terms
 
-## Project structure
+Base tokens such as `TLN001` and lottery tickets should be treated uniformly once they are represented as series. Default actors should not branch on “base asset versus ticket” for ordinary holding, trading, quoting, or reporting behavior.
 
-The project should be split up into two halves: An API and a game. The API should be relatively minimal and enforce less than the game. Rules which should not be enforced by the API are marked as unofficial, but this is non-comprehensive. Exercise taste and/or ask. This is sort of non-strict. If a feature could be used to simulate some weird cryptocurrency thing, it should be API. If it's about a specific market (e.g. the notion of the Government) it should be game.
+## Current Direction
 
-## Game Structure
+The core should be a market model, not a hard-coded default game. The default game is a scenario layered on top of core mechanics.
 
-An instance of the game has $N$ players, who are registered up front in an instance of the game. Unofficially, players are one of two kinds of entities, the other being NPCs. In the API they are all considered entities.
+The active direction is:
 
-The game progresses in rounds, which are played simultaneously across all players. The rounds have an optional time limit of $T$ seconds.
+- keep core focused on entities, series, holdings, offerings, orders, fills, markets, and settlement
+- keep lotteries as the first concrete risk-bearing instrument
+- defer raffles until lotteries and generic instrument trading feel good
+- remove survival as a default-game driver
+- use the default game as a stress test for treating lottery tickets and base tokens as ordinary tradable series
 
-Each round, entities may submit any number of _orders_. Orders are detailed in the next section, but broadly are actions on a market. Orders are resolved after all players and NPCs submit orders (including a null order). 
-
-A specific set of players are known as Governments. Governments are "immortal" entities which control a set of default markets. They have an unofficial role as the only markets by default visible at the start of the game.
-
-(unofficially) All players begin in at least one market, run by a Government. New markets are advertised by tokens, sold on other markets, which grant entry into the market.
-
-## Markets, Tokens, Orders, and Derivatives
-
-The game includes multiple markets, on which assets are sold. Assets are simplified versions of financial assets. 
-
-### Markets
-
-_Markets_ are spaces for trading to occur. They are "owned" by a specific entity, which has an exclusive right to set mandatory purchase and sales on that market.
-
-### Assets
-
-_Tokens_ are kinds of _assets_. All of them can be purchased and sold, and take a number of different forms.
-
-_Tokens_ are abstract objects which are specified by 3 letters and 3 numbers specified by a dash, e.g. ABC-123, XYZ-987, etc. All of them are completely discrete. Some of them are limited in quantity, although this limit may change (e.g. by issuance of further tokens). They are probably most similar to cryptocurrency assets, but carry no specific meaning. The precise meaning of any given token is left as an exercise to the player, they are meant to be kind of mysterious.
-
-### Orders
-
-Orders are actions on the market. Really, there are three: Buy, sell, and issue. Buy and sell are resolved in the usual way (price first, then FIFO).
-
-Issue orders create new kinds of tokens. Tokens may be totally abstract, but more commonly they are derivative contracts. These should be a flexible framework in the API but a few motivating examples are:
-- Lotteries. Tokens issued by a lottery issuance may be purchased to get a chance at a payout. These tokens must be purchased for nothing at expiry time by the issuer (and conversely sold by the bearer) and are resolved automatically. Draws can admit no winner (like the numbers game) or be drawn only from bearers at the option of the issuer.
-- Markets. New markets may be created by anyone. These issue tokens which can be used in the market. Markets may require the purchase or sale of certain other tokens in some quantities to enter. This may be a recurring or one-time cost.
-- Futures. These work as expected.
-- Options. Also work as expected.
-
-## The Default Game
-
-This market is basically trivial but represents a straightforward way to test the game.
-
-The default game includes a single approved market, run by a single Government, which issues a token called TLN-001 that grants access to the market for a single turn. The token is issued as a lottery ticket. The ticket costs 1 TLN-001 and the lottery pays out 1 TLN-001 to one bearer at random. Effectively one participant gets their deposit back. Players start with $S$ TLN-001.
-
-## Narrow v1 Specification
-
-This section narrows the design above into a concrete first implementation. The goal of v1 is to produce a pure game engine that can run the default game with enough real trading to exercise the market rules, while deferring more general derivatives and market creation until later.
-
-### Scope
-
-v1 includes:
-
-- one immortal Government entity
-- $N$ mortal entities registered up front
-- one approved market
-- one survival token, TLN-001
-- three abstract tradable tokens, TLN-101, TLN-102, and TLN-103
-- round-based simultaneous play
-- round-local limit orders with price-time matching
-- Government redemption of abstract tokens into TLN-001 at published per-round rates
-- a small per-round Government grant of abstract tokens to surviving mortals
-- a recurring survival stake in TLN-001
-- a single random refund of that stake each round
-
-v1 does not include:
-
-- futures
-- options
-- player-created markets
-- standing orders across rounds
-- market orders
-- fractional quantities or prices
+## Core Model
 
 ### Entities
 
-An _entity_ is any participant in the engine. In v1 there are two kinds:
+Entities are market participants. The current default setup includes a Government entity, human-controlled player entities, and NPC entities. Core order validation now allows any alive entity to submit orders.
 
-- _Government_: immortal, controls the approved market, publishes redemption values, and wins by default if all mortal entities are eliminated
-- _Player_: mortal entity with a display name; for now these may be generated placeholder names
+### Series
 
-Only mortal entities may be eliminated.
+A `SeriesId` identifies a fungible class of positions. Holdings are balances by entity and series.
 
-### Assets
+Current series kinds include:
 
-All assets are discrete tokens. Internal identity should not rely only on the display form `ABC-123`; that string is a presentation detail.
+- base series, such as `TLN001` and abstract token series
+- lottery ticket series issued by lottery offerings
+- placeholder raffle and derivative series kinds for later work
 
-v1 defines four assets:
+A series carries common metadata plus kind-specific terms. Base series point back to an `AssetId`; lottery ticket series carry lottery terms.
 
-- `TLN-001`: the access and survival token
-- `TLN-101`: abstract tradable token
-- `TLN-102`: abstract tradable token
-- `TLN-103`: abstract tradable token
+### Offerings
 
-At game start:
+An `InstrumentOffering` is a primary issuance opportunity. The default game currently publishes lottery offerings. Purchasing an offering issues positions in the offered ticket series, debits the buyer, credits the issuer, inserts the ticket series into the catalog, and lists that ticket series for trading against `TLN001`.
 
-- each mortal entity begins with `S` units of `TLN-001`
-- each mortal entity begins with a small random bundle of `TLN-101`, `TLN-102`, and `TLN-103`
-- Government begins with a large reserve of all four assets
+### Markets and Orders
 
-At the start of each new round after settlement, each surviving mortal entity receives a small Government grant of abstract tokens for the next round. This keeps the abstract-token market alive after redemption rather than collapsing after the first cycle.
+Markets list tradable `(baseSeries, quoteSeries)` pairs. Orders buy or sell the base series for the quote series. The default market quotes against `TLN001`, but the ordered asset itself is a generic `SeriesId`.
 
-### Market Model
+Two-sided quoting by the same entity is allowed so a Government market maker can post both bid and ask liquidity.
 
-There is one approved market in v1, owned by the Government.
+### Settlement
 
-The market uses an ephemeral round book:
+Lottery ticket series settle at maturity. Payouts go to the current holder of the ticket series, not necessarily the original purchaser. This is the main reason lottery tickets must behave like bearer-like series positions.
 
-- orders are submitted during a round
-- matching occurs once, after submissions close
-- partial fills are allowed
-- any unfilled remainder expires at the end of the round
+## Default Game
 
-The intended future extension point is to support other matching policies, including a uniform-price batch auction, behind the same settlement interface.
+The current default game is intentionally simple:
 
-### Order Model
+- one Government entity
+- a configurable number of human and NPC entities
+- one default Government market
+- active lottery offerings each round
+- NPC actor inputs for market activity
+- a Government market maker that quotes listed `SeriesId` pairs generically
+- no survival stake, refund, or elimination loop
+- no raffle behavior yet
 
-v1 supports limit orders only.
+The default game should be good at producing observable market activity. It should not define core abstractions.
 
-Each order contains:
+## Default Round Shape
 
-- submitting entity
-- market
-- side (`buy` or `sell`)
-- base asset
-- quote asset
-- quantity, in whole units of the base asset
-- limit price, in whole units of the quote asset per 1 unit of the base asset
-- an order identifier used for deterministic tie-breaking
+The default web/server flow currently builds a round by combining:
 
-All trade is token-denominated. There is no floating-point money and no fractional pricing.
+1. human-staged orders and offering purchases
+2. default actor inputs generated by `Tlon.Game.Default.Rules.defaultActorInputs`
+3. default round rules from `defaultRoundRules`
 
-#### Validation Rules
+Then the pure core engine runs `stepRound`.
 
-An order is valid only if:
+The default actor layer currently generates:
 
-- the entity is active in the market at the start of the round
-- the entity is not attempting to trade with itself
-- quantity is positive
-- price is positive
-- the asset pair is permitted on that market
-- the entity has sufficient reservable inventory
+- Government market-maker orders over listed `TLN001` pairs
+- simple NPC trader orders over listed `SeriesId` pairs
+- simple NPC purchases of active offerings
 
-Reservation is mandatory:
+## Current Web Shape
 
-- a buy order locks the full worst-case quote amount at submission time
-- a sell order locks the full base quantity at submission time
+The web interface is a server-rendered Haskell app. The current UI is a simple trading dashboard, optimized for one human trader plus NPC flow.
 
-Reserved assets cannot be spent again during the same round. Any unused reserved amount is released after settlement.
+It surfaces:
 
-### Matching Rules
+- the player’s inventory as series positions
+- active offerings
+- listed market pairs
+- a limit-order form over listed `SeriesId`s
+- per-offering purchase controls
+- round status
+- latest report and activity history
 
-v1 uses price-time priority:
+The JSON API uses series vocabulary for generic market/position fields, such as `seriesId`, `baseSeriesId`, and `quoteSeriesId`.
 
-- better price first
-- for equal price, earlier submission first
-- for truly simultaneous ties, lower order identifier first
+## Implementation Architecture
 
-Matching is deterministic given the round inputs and seed.
+The current split is:
 
-Self-trading is disallowed. If two orders would match but belong to the same entity, they do not trade with each other.
-
-### Round Visibility
-
-The game is simultaneous by round, so current-round submissions are hidden until resolution.
-
-Visible at round start:
-
-- current holdings
-- current redemption values published by Government
-- previous round's submitted orders, fills, expirations, and lottery result
-- market definitions and approved-market list
-
-Hidden until resolution:
-
-- current round submitted orders
-
-Visible after resolution:
-
-- the full current-round order book
-- all fills and expirations
-- redemption outcomes
-- survival stake results
-- the lottery refund result
-
-### Instrument-Series Redesign Plan
-
-The current implementation still treats tradable things primarily as a small closed set of assets and treats lottery participation as a round action. That is not the long-term shape. The intended redesign is to move the core model toward first-class instrument series and positions.
-
-The governing distinction is between instrument definition and position:
-
-- an _instrument series_ defines what a tradable thing is, who issued it, how it settles, and whether it expires
-- a _position_ records how much of a given series an entity holds
-
-Under this model:
-
-- `TLN-001`, `TLN-101`, `TLN-102`, and `TLN-103` are base instrument series
-- lottery tickets are per-round issued instrument series with explicit settlement terms
-- raffle tickets are also instrument series, differing mainly in how their settlement draw is defined
-- later derivatives should also be modeled as issued instrument series rather than as ad hoc side systems
-
-The redesign should be staged.
-
-#### Phase 1: core identity split with no behavior change
-
-Introduce a series registry in core state and begin separating `AssetId` from the more general notion of a tradable series.
-
-Goals:
-
-- add a `SeriesId`-like identifier and a catalog of series metadata
-- keep current behavior unchanged
-- keep holdings, orders, fills, grants, and reports economically identical while moving the core vocabulary away from a closed asset enum
-- keep the web layer mostly stable by treating it as an adapter over the old names
-
-At the end of this phase, the engine should still behave exactly as it does now, but the core model should have a place to represent dynamic issued series.
-
-#### Phase 2: ticket series as real positions
-
-Replace immediate lottery resolution with ticket issuance.
-
-Goals:
-
-- reinterpret the lottery menu as a primary issuance menu for ticket series
-- have purchases mint transferable ticket positions rather than resolve immediately
-- settle matured ticket positions in a later settlement step
-- preserve the existing web flow temporarily by allowing the web layer to continue submitting simple ticket counts against the currently offered series
-
-This is the phase where lottery tickets become real bearer-like positions in the ledger.
-
-#### Phase 3: unify raffles with ticket settlement
-
-Move the survival/refund path onto the same substrate.
-
-Goals:
-
-- model raffle participation as issued short-lived series rather than as a dedicated side rule
-- express both lotteries and raffles as different settlement rules over held series
-- remove the last special-case distinction between “round action” and “held claim”
-
-#### Later phase: derivatives on top of series
-
-Once markets, positions, and settlements all point at first-class series, derivatives become additive rather than architectural.
-
-Goals:
-
-- allow issued series to reference other series as underlyings
-- preserve fungibility at the series level
-- keep obligations, margin, and settlement logic separate from the position ledger where necessary
-
-The key design commitment is that tickets should be fungible series, not individually tracked serial-numbered objects. They should behave as transferable bearer-like claims represented by positions in issued series.
-
-### Survival Rule
-
-To remain in the approved market for the next round, each mortal entity must pay a survival stake of 1 `TLN-001` each round.
-
-After all normal fills and redemptions resolve:
-
-- each eligible mortal entity pays 1 `TLN-001`
-- one eligible mortal entity is selected at random to receive 1 `TLN-001` back
-
-Effectively, one participant gets that round's stake refunded.
-
-An entity that cannot pay the survival stake is eliminated at the end of the round.
-
-### Victory Rule
-
-The game ends when no mortal entities remain.
-
-If all mortal entities are eliminated in the same round, Government wins by default.
-
-If exactly one mortal entity remains after elimination, that entity is the winner.
-
-### Default Round Sequence
-
-The v1 engine should model one round as the following ordered pipeline:
-
-1. publish round-start view
-2. collect orders from active mortal entities and any NPC policies later added
-3. validate orders and reserve inventory
-4. match orders using the configured matching policy
-5. settle fills and release unused reserves
-6. apply Government redemption of abstract tokens into `TLN-001`
-7. apply the survival stake and random refund
-8. if the game continues, grant abstract tokens for the next round and publish the next round's redemption values
-9. eliminate mortal entities with no approved-market access for the next round
-10. publish a complete round report
-11. check for victory
-
-### Implementation Architecture
-
-The first implementation should keep the engine pure and deterministic. The core stepping function should take explicit round inputs and produce a new state plus an event log.
-
-A suitable module split is:
-
-- `Tlon`: small public surface and re-exports
-- `Tlon.Core.Types`: identifiers, entities, assets, markets, orders, fills
-- `Tlon.Core.State`: game state, holdings, reservations, visibility snapshots
-- `Tlon.Core.Engine`: round stepping pipeline
-- `Tlon.Core.OrderBook`: price-time matching
-- `Tlon.Core.Event`: round reports and audit events
+- `Tlon.Core.Types`: identifiers, entities, instruments, offerings, orders, fills, markets
+- `Tlon.Core.State`: game state, holdings, series catalog, helper queries
+- `Tlon.Core.Engine`: pure round stepping, validation, matching, fill settlement, report construction
+- `Tlon.Core.Rules`: scenario hooks used by the core engine
+- `Tlon.Core.OrderBook`: matching policy implementation
+- `Tlon.Core.Event`: round report and event data
 - `Tlon.Core.Rng`: deterministic seeded randomness
-- `Tlon.Game.Default.Config`: `N`, `S`, seeds, token bundle parameters
-- `Tlon.Game.Default.Config`: `N`, `S`, seeds, token bundle and round-grant parameters
-- `Tlon.Game.Default.Setup`: initial game construction
-- `Tlon.Game.Default.Rules`: redemption schedule, survival stake, elimination
-- `Tlon.Game.Default.View`: simple text rendering for a CLI runner
+- `Tlon.Game.Default.Config`: default scenario configuration
+- `Tlon.Game.Default.Setup`: initial default state construction
+- `Tlon.Game.Default.Rules`: default offerings, lottery issuance/settlement, actor inputs, grants
+- `Tlon.Game.Default.View`: text rendering
+- `Tlon.Web.*`: server state, JSON encoders, route table, HTML views
 
-The matching engine should be abstracted behind a policy boundary so that v1 can use price-time priority while later versions may add uniform-price batch matching without reshaping the rest of the engine.
+The important architectural boundary is that `Tlon.Core` must not import `Tlon.Game.Default`. The default scenario adapts to the core through `RoundRules`.
 
-Conceptually:
+## Deferred Work
 
-- `stepRound :: RoundInputs -> GameState -> (GameState, [GameEvent])`
-- `matchRound :: MatchingPolicy -> [ValidatedOrder] -> [Fill]`
+Short-term cleanup before closing the branch:
 
-### Open Questions Deferred Past v1
+- continue manual web UI review
+- decide whether to keep or remove stale local helper scripts
+- review the final diff for unrelated editor/config files before committing
 
-The following are intentionally postponed until after the default game is working:
+Later design work:
 
-- generalized issuance for derivatives
-- market creation by players
-- persistent order books
-- richer visibility rules across multiple markets
-- alternate end conditions beyond last-mortal-standing
+- make reports/events more generic; they still contain lottery- and survival-shaped fields
+- decide how default-game win conditions should work without survival
+- improve NPC policies without making them core concepts
+- revisit raffles as another instrument/settlement form
+- add richer derivative instruments once series, issuance, and settlement feel stable
+- consider persistent order books only after the current round-based model is understood

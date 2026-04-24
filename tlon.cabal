@@ -17,6 +17,7 @@ library
     Tlon.Core.Event
     Tlon.Core.OrderBook
     Tlon.Core.Rng
+    Tlon.Core.Rules
     Tlon.Core.State
     Tlon.Core.Types
     Tlon.Game.Default.Config

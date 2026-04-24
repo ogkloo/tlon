@@ -87,20 +87,21 @@ The web server defaults to `http://127.0.0.1:8080`.
 
 Current web flow:
 
-- create a lobby with a chosen number of human seats
+- create a one-player trading dashboard with optional NPC flow
 - optionally reserve NPC seats at lobby creation
-- share per-player URLs
+- share per-player URLs if using more than one human seat
 - start the game once all human seats are filled
-- stage orders and lottery tickets per player
+- stage limit orders over listed `SeriesId` pairs
+- stage per-offering purchases for active instrument offerings
 - submit turns manually, or let timed rounds auto-resolve if a timer was configured
 
 Player pages currently surface:
 
-- latest round report
-- per-player inventory
-- staged actions
-- seat table and status
-- global holdings and round history
+- inventory as series positions
+- active offerings
+- listed markets
+- staged trading actions
+- latest round report, instrument activity, and round history
 
 ## Fast Feedback Tools
 

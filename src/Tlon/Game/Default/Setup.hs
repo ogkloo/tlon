@@ -49,7 +49,7 @@ initialState config =
             , gameSeriesCatalog = seriesCatalog
             , gameMarkets = Map.fromList [(marketId market, market)]
             , gameHoldings = holdings
-            , gameLotteryMenu = lotteryMenuForRound roundNumber
+            , gameActiveOfferings = defaultOfferingsForRound (entityId government) roundNumber
             , gamePreviousReport = Nothing
             , gameWinner = Nothing
             }
@@ -60,16 +60,11 @@ buildBaseSeriesCatalog assetIssuers =
         [ ( assetSeriesId assetId
           , InstrumentSeries
                 { instrumentSeriesId = assetSeriesId assetId
-                , instrumentSeriesBaseAssetId = Just assetId
                 , instrumentSeriesKind = BaseSeries
                 , instrumentSeriesIssuer = issuerId
                 , instrumentSeriesRoundIssued = Nothing
                 , instrumentSeriesSettlementRound = Nothing
-                , instrumentSeriesTicketPrice = Nothing
-                , instrumentSeriesOddsNumerator = Nothing
-                , instrumentSeriesOddsDenominator = Nothing
-                , instrumentSeriesPayoutQuantity = Nothing
-                , instrumentSeriesPayoutAssetId = Nothing
+                , instrumentSeriesTerms = BaseInstrumentTerms assetId
                 }
           )
         | (assetId, issuerId) <- Map.toList assetIssuers

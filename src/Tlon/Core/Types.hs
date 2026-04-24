@@ -4,11 +4,15 @@ module Tlon.Core.Types (
     EntityId (..),
     EntityKind (..),
     Fill (..),
+    InstrumentOffering (..),
     InstrumentSeries (..),
     InstrumentSeriesKind (..),
+    InstrumentTerms (..),
     InvalidReason (..),
-    LotteryOffer (..),
-    LotteryPurchase (..),
+    LotteryOfferingTerms (..),
+    LotteryTerms (..),
+    OfferingPurchase (..),
+    OfferingTerms (..),
     Market (..),
     MarketRule (..),
     MarketId (..),
@@ -18,6 +22,7 @@ module Tlon.Core.Types (
     Price,
     Quantity,
     SeriesId,
+    SeriesStatus (..),
     Side (..),
     ValidatedOrder (..),
     allAbstractAssets,
@@ -56,14 +61,14 @@ allAbstractAssets = [TLN101, TLN102, TLN103]
 assetSeriesId :: AssetId -> SeriesId
 assetSeriesId = show
 
-ticketSeriesId :: Int -> Int -> AssetId -> Quantity -> Int -> Int -> Quantity -> SeriesId
-ticketSeriesId roundIssued duration payoutAsset ticketPrice oddsNumerator oddsDenominator payoutQuantity =
+ticketSeriesId :: Int -> Int -> SeriesId -> Quantity -> Int -> Int -> Quantity -> SeriesId
+ticketSeriesId roundIssued duration payoutSeriesId ticketPrice oddsNumerator oddsDenominator payoutQuantity =
     "LOTTO-"
         ++ show roundIssued
         ++ "-"
         ++ show duration
         ++ "-"
-        ++ show payoutAsset
+        ++ payoutSeriesId
         ++ "-"
         ++ show ticketPrice
         ++ "-"
@@ -89,35 +94,64 @@ data InstrumentSeriesKind
     | DerivativeSeries
     deriving (Eq, Show)
 
+data SeriesStatus
+    = BaseSeriesStatus
+    | ActiveSeriesStatus
+    | MaturedSeriesStatus
+    | SettledSeriesStatus
+    deriving (Eq, Show)
+
+data InstrumentTerms
+    = BaseInstrumentTerms AssetId
+    | LotteryInstrumentTerms LotteryTerms
+    | RaffleInstrumentTerms
+    | DerivativeInstrumentTerms
+    deriving (Eq, Show)
+
+data LotteryTerms = LotteryTerms
+    { lotteryTermsTicketPrice :: Quantity
+    , lotteryTermsOddsNumerator :: Int
+    , lotteryTermsOddsDenominator :: Int
+    , lotteryTermsPayoutQuantity :: Quantity
+    , lotteryTermsPayoutSeriesId :: SeriesId
+    }
+    deriving (Eq, Show)
+
 data InstrumentSeries = InstrumentSeries
     { instrumentSeriesId :: SeriesId
-    , instrumentSeriesBaseAssetId :: Maybe AssetId
     , instrumentSeriesKind :: InstrumentSeriesKind
     , instrumentSeriesIssuer :: EntityId
     , instrumentSeriesRoundIssued :: Maybe Int
     , instrumentSeriesSettlementRound :: Maybe Int
-    , instrumentSeriesTicketPrice :: Maybe Quantity
-    , instrumentSeriesOddsNumerator :: Maybe Int
-    , instrumentSeriesOddsDenominator :: Maybe Int
-    , instrumentSeriesPayoutQuantity :: Maybe Quantity
-    , instrumentSeriesPayoutAssetId :: Maybe AssetId
+    , instrumentSeriesTerms :: InstrumentTerms
     }
     deriving (Eq, Show)
 
-data LotteryOffer = LotteryOffer
-    { lotteryOfferAssetId :: SeriesId
-    , lotteryOfferTicketPrice :: Quantity
-    , lotteryOfferOddsNumerator :: Int
-    , lotteryOfferOddsDenominator :: Int
-    , lotteryOfferPayoutQuantity :: Quantity
-    , lotteryOfferDurationRounds :: Int
+data OfferingTerms
+    = LotteryOffering LotteryOfferingTerms
+    deriving (Eq, Show)
+
+data LotteryOfferingTerms = LotteryOfferingTerms
+    { lotteryOfferingPayoutSeriesId :: SeriesId
+    , lotteryOfferingTicketPrice :: Quantity
+    , lotteryOfferingOddsNumerator :: Int
+    , lotteryOfferingOddsDenominator :: Int
+    , lotteryOfferingPayoutQuantity :: Quantity
+    , lotteryOfferingDurationRounds :: Int
     }
     deriving (Eq, Show)
 
-data LotteryPurchase = LotteryPurchase
-    { lotteryPurchaseEntityId :: EntityId
-    , lotteryPurchaseAssetId :: SeriesId
-    , lotteryPurchaseQuantity :: Quantity
+data InstrumentOffering = InstrumentOffering
+    { instrumentOfferingSeriesId :: SeriesId
+    , instrumentOfferingIssuer :: EntityId
+    , instrumentOfferingTerms :: OfferingTerms
+    }
+    deriving (Eq, Show)
+
+data OfferingPurchase = OfferingPurchase
+    { offeringPurchaseEntityId :: EntityId
+    , offeringPurchaseSeriesId :: SeriesId
+    , offeringPurchaseQuantity :: Quantity
     }
     deriving (Eq, Show)
 

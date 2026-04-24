@@ -25,7 +25,8 @@ gameJson runningGame =
             , "participants" .= map renderHumanPlayer (runningParticipants runningGame)
             , "roundNumber" .= gameRoundNumber state
             , "winner" .= fmap showEntityId (gameWinner state)
-            , "lotteryMenu" .= map renderLotteryOffer (gameLotteryMenu state)
+            , "activeOfferings" .= map renderOffering (gameActiveOfferings state)
+            , "seriesCatalog" .= map (renderSeries state) (Map.elems (gameSeriesCatalog state))
             , "markets" .= map (renderMarket state) (Map.elems (gameMarkets state))
             , "entities" .= map (entitySummary state) (Map.elems (gameEntities state))
             ]
@@ -34,9 +35,9 @@ reportJson :: RoundReport -> Value
 reportJson report =
     object
         [ "roundNumber" .= reportRoundNumber report
-        , "lotteryMenu" .= map renderLotteryOffer (reportLotteryMenu report)
+        , "activeOfferings" .= map renderOffering (reportActiveOfferings report)
         , "submittedOrders" .= map renderOrder (reportSubmittedOrders report)
-        , "lotteryPurchases" .= map renderLotteryPurchase (reportLotteryPurchases report)
+        , "offeringPurchases" .= map renderOfferingPurchase (reportOfferingPurchases report)
         , "invalidOrders" .= map renderInvalidOrder (reportInvalidOrders report)
         , "fills" .= map renderFill (reportFills report)
         , "expiredOrders" .= map renderExpiredOrder (reportExpiredOrders report)
@@ -45,7 +46,7 @@ reportJson report =
         , "survivalResults" .= map renderSurvivalResult (reportSurvivalResults report)
         , "refundRecipient" .= fmap showEntityId (reportRefundRecipient report)
         , "nextRoundGrants" .= map renderGrant (reportNextRoundGrants report)
-        , "nextLotteryMenu" .= map renderLotteryOffer (reportNextLotteryMenu report)
+        , "nextActiveOfferings" .= map renderOffering (reportNextActiveOfferings report)
         ]
 
 entitySummary :: GameState -> Entity -> Value
@@ -66,6 +67,39 @@ renderHumanPlayer participant =
         , "entityId" .= fmap showEntityId (humanPlayerEntityId participant)
         ]
 
+renderSeries :: GameState -> InstrumentSeries -> Value
+renderSeries state series =
+    object
+        [ "seriesId" .= instrumentSeriesId series
+        , "kind" .= show (instrumentSeriesKind series)
+        , "status" .= show (seriesStatus state series)
+        , "outstandingQuantity" .= seriesOutstandingQuantity state (instrumentSeriesId series)
+        , "issuer" .= showEntityId (instrumentSeriesIssuer series)
+        , "roundIssued" .= instrumentSeriesRoundIssued series
+        , "settlementRound" .= instrumentSeriesSettlementRound series
+        , "terms" .= renderInstrumentTerms (instrumentSeriesTerms series)
+        ]
+
+renderInstrumentTerms :: InstrumentTerms -> Value
+renderInstrumentTerms terms =
+    case terms of
+        BaseInstrumentTerms assetId ->
+            object
+                [ "type" .= ("base" :: String)
+                , "assetId" .= show assetId
+                ]
+        LotteryInstrumentTerms lotteryTerms ->
+            object
+                [ "type" .= ("lottery" :: String)
+                , "ticketPrice" .= lotteryTermsTicketPrice lotteryTerms
+                , "oddsNumerator" .= lotteryTermsOddsNumerator lotteryTerms
+                , "oddsDenominator" .= lotteryTermsOddsDenominator lotteryTerms
+                , "payoutQuantity" .= lotteryTermsPayoutQuantity lotteryTerms
+                , "payoutSeriesId" .= lotteryTermsPayoutSeriesId lotteryTerms
+                ]
+        RaffleInstrumentTerms -> object ["type" .= ("raffle" :: String)]
+        DerivativeInstrumentTerms -> object ["type" .= ("derivative" :: String)]
+
 renderMarket :: GameState -> Market -> Value
 renderMarket state market =
     object
@@ -80,8 +114,8 @@ renderMarket state market =
 renderMarketPair :: (SeriesId, SeriesId) -> Value
 renderMarketPair (baseAsset, quoteAsset) =
     object
-        [ "baseAsset" .= baseAsset
-        , "quoteAsset" .= quoteAsset
+        [ "baseSeriesId" .= baseAsset
+        , "quoteSeriesId" .= quoteAsset
         ]
 
 ownerIssuedCurrencies :: GameState -> Market -> [AssetId]
@@ -95,7 +129,7 @@ ownerIssuedCurrencies state market =
 renderSeriesQuantity :: (SeriesId, Quantity) -> Value
 renderSeriesQuantity (seriesId, quantity) =
     object
-        [ "assetId" .= seriesId
+        [ "seriesId" .= seriesId
         , "quantity" .= quantity
         ]
 
@@ -105,8 +139,8 @@ renderOrder order =
         [ "orderId" .= show (orderId order)
         , "entityId" .= showEntityId (orderEntityId order)
         , "side" .= show (orderSide order)
-        , "baseAsset" .= orderBaseAsset order
-        , "quoteAsset" .= orderQuoteAsset order
+        , "baseSeriesId" .= orderBaseAsset order
+        , "quoteSeriesId" .= orderQuoteAsset order
         , "quantity" .= orderQuantity order
         , "limitPrice" .= orderLimitPrice order
         ]
@@ -125,8 +159,8 @@ renderFill fill =
         , "sellOrderId" .= show (fillSellOrderId fill)
         , "buyer" .= showEntityId (fillBuyer fill)
         , "seller" .= showEntityId (fillSeller fill)
-        , "baseAsset" .= fillBaseAsset fill
-        , "quoteAsset" .= fillQuoteAsset fill
+        , "baseSeriesId" .= fillBaseAsset fill
+        , "quoteSeriesId" .= fillQuoteAsset fill
         , "quantity" .= fillQuantity fill
         , "price" .= fillPrice fill
         ]
@@ -139,22 +173,34 @@ renderExpiredOrder expiredOrder =
         , "quantity" .= expiredQuantity expiredOrder
         ]
 
-renderLotteryOffer :: LotteryOffer -> Value
-renderLotteryOffer offer =
+renderOffering :: InstrumentOffering -> Value
+renderOffering offering =
     object
-        [ "assetId" .= lotteryOfferAssetId offer
-        , "ticketPrice" .= lotteryOfferTicketPrice offer
-        , "oddsNumerator" .= lotteryOfferOddsNumerator offer
-        , "oddsDenominator" .= lotteryOfferOddsDenominator offer
-        , "payoutQuantity" .= lotteryOfferPayoutQuantity offer
+        [ "seriesId" .= instrumentOfferingSeriesId offering
+        , "issuer" .= showEntityId (instrumentOfferingIssuer offering)
+        , "terms" .= renderOfferingTerms (instrumentOfferingTerms offering)
         ]
 
-renderLotteryPurchase :: LotteryPurchase -> Value
-renderLotteryPurchase purchase =
+renderOfferingTerms :: OfferingTerms -> Value
+renderOfferingTerms terms =
+    case terms of
+        LotteryOffering lotteryTerms ->
+            object
+                [ "type" .= ("lottery" :: String)
+                , "payoutSeriesId" .= lotteryOfferingPayoutSeriesId lotteryTerms
+                , "ticketPrice" .= lotteryOfferingTicketPrice lotteryTerms
+                , "oddsNumerator" .= lotteryOfferingOddsNumerator lotteryTerms
+                , "oddsDenominator" .= lotteryOfferingOddsDenominator lotteryTerms
+                , "payoutQuantity" .= lotteryOfferingPayoutQuantity lotteryTerms
+                , "durationRounds" .= lotteryOfferingDurationRounds lotteryTerms
+                ]
+
+renderOfferingPurchase :: OfferingPurchase -> Value
+renderOfferingPurchase purchase =
     object
-        [ "entityId" .= showEntityId (lotteryPurchaseEntityId purchase)
-        , "assetId" .= lotteryPurchaseAssetId purchase
-        , "quantity" .= lotteryPurchaseQuantity purchase
+        [ "entityId" .= showEntityId (offeringPurchaseEntityId purchase)
+        , "seriesId" .= offeringPurchaseSeriesId purchase
+        , "quantity" .= offeringPurchaseQuantity purchase
         ]
 
 renderLotteryIssuance :: LotteryIssuance -> Value

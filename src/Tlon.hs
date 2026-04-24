@@ -1,7 +1,8 @@
-module Tlon
-  ( module Tlon.Core.Engine,
+module Tlon (
+    module Tlon.Core.Engine,
     module Tlon.Core.Event,
     module Tlon.Core.OrderBook,
+    module Tlon.Core.Rules,
     module Tlon.Core.State,
     module Tlon.Core.Types,
     module Tlon.Game.Default.Config,
@@ -12,12 +13,13 @@ module Tlon
     module Tlon.Web.State,
     module Tlon.Web.View,
     defaultGameState,
-  )
+)
 where
 
 import Tlon.Core.Engine
 import Tlon.Core.Event
 import Tlon.Core.OrderBook
+import Tlon.Core.Rules
 import Tlon.Core.State
 import Tlon.Core.Types
 import Tlon.Game.Default.Config

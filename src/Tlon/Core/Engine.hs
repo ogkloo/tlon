@@ -7,22 +7,21 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Tlon.Core.Event
 import Tlon.Core.OrderBook
+import Tlon.Core.Rules
 import Tlon.Core.State
 import Tlon.Core.Types
-import Tlon.Game.Default.Config
-import Tlon.Game.Default.Rules
 
-stepRound :: DefaultConfig -> RoundInputs -> GameState -> (GameState, [GameEvent])
-stepRound config inputs state =
+stepRound :: RoundRules -> RoundInputs -> GameState -> (GameState, [GameEvent])
+stepRound rules inputs state =
     let submissions = roundOrders inputs
-        lotteryPurchases = roundLotteryPurchases inputs
+        offeringPurchases = roundOfferingPurchases inputs
         (validatedOrders, invalidOrders) = validateOrders state submissions
         fills = matchRound (gameMatchingPolicy state) validatedOrders
         expiredOrders = computeExpiredOrders validatedOrders fills
         settledState = state{gameHoldings = settleFills state (gameHoldings state) fills}
-        (issuedState, lotteryIssuances) = applyLotteryPurchases lotteryPurchases settledState
-        (lotteryState, lotterySettlements) = applyLotterySettlements issuedState
-        (survivedState, survivalResults, refundRecipient) = applySurvival lotteryState
+        (issuedState, lotteryIssuances) = roundRulesApplyOfferingPurchases rules offeringPurchases settledState
+        (lotteryState, lotterySettlements) = roundRulesApplyInstrumentSettlements rules issuedState
+        (survivedState, survivalResults, refundRecipient) = roundRulesApplyRoundEffects rules lotteryState
         winner = determineWinner survivedState
         nextRoundNumber = gameRoundNumber state + 1
         advancedState =
@@ -30,18 +29,19 @@ stepRound config inputs state =
                 { gameRoundNumber = nextRoundNumber
                 , gameWinner = winner
                 }
-        (finalState, grants, nextLotteryMenu) =
+        (finalState, grants, nextActiveOfferings) =
             case winner of
                 Nothing ->
-                    let (grantedState, granted) = grantNextRoundTokens (configRoundGrantQuantity config) advancedState
-                     in (grantedState{gameLotteryMenu = lotteryMenuForRound nextRoundNumber}, granted, lotteryMenuForRound nextRoundNumber)
-                Just _ -> (advancedState{gameLotteryMenu = []}, [], [])
+                    let (grantedState, granted) = roundRulesGrantNextRound rules advancedState
+                        offerings = roundRulesActiveOfferingsForRound rules grantedState nextRoundNumber
+                     in (grantedState{gameActiveOfferings = offerings}, granted, offerings)
+                Just _ -> (advancedState{gameActiveOfferings = []}, [], [])
         report =
             RoundReport
                 { reportRoundNumber = gameRoundNumber state
-                , reportLotteryMenu = gameLotteryMenu state
+                , reportActiveOfferings = gameActiveOfferings state
                 , reportSubmittedOrders = submissions
-                , reportLotteryPurchases = lotteryPurchases
+                , reportOfferingPurchases = offeringPurchases
                 , reportInvalidOrders = invalidOrders
                 , reportFills = fills
                 , reportExpiredOrders = expiredOrders
@@ -50,49 +50,42 @@ stepRound config inputs state =
                 , reportSurvivalResults = survivalResults
                 , reportRefundRecipient = refundRecipient
                 , reportNextRoundGrants = grants
-                , reportNextLotteryMenu = nextLotteryMenu
+                , reportNextActiveOfferings = nextActiveOfferings
                 }
         stateWithReport = finalState{gamePreviousReport = Just report}
      in (stateWithReport, [RoundResolved report])
 
 validateOrders :: GameState -> [Order] -> ([ValidatedOrder], [InvalidOrder])
 validateOrders state orders =
-    let folder (validated, invalids, reserved, seenSides) (submissionIndex, order) =
-            case validateOrder state reserved seenSides order of
-                Left reason -> (validated, invalids ++ [InvalidOrder order reason], reserved, seenSides)
-                Right (reserved', seenSides') ->
+    let folder (validated, invalids, reserved) (submissionIndex, order) =
+            case validateOrder state reserved order of
+                Left reason -> (validated, invalids ++ [InvalidOrder order reason], reserved)
+                Right reserved' ->
                     ( validated ++ [ValidatedOrder order submissionIndex]
                     , invalids
                     , reserved'
-                    , seenSides'
                     )
-        (validatedOrders, invalidOrders, _, _) = foldl folder ([], [], Map.empty, Map.empty) (zip [0 ..] orders)
+        (validatedOrders, invalidOrders, _) = foldl folder ([], [], Map.empty) (zip [0 ..] orders)
      in (validatedOrders, invalidOrders)
 
 validateOrder ::
     GameState ->
     Holdings ->
-    Map (EntityId, MarketId, SeriesId, SeriesId) Side ->
     Order ->
-    Either InvalidReason (Holdings, Map (EntityId, MarketId, SeriesId, SeriesId) Side)
-validateOrder state reserved seenSides order
+    Either InvalidReason Holdings
+validateOrder state reserved order
     | not (isActiveOrderingEntity state order) = Left InactiveEntity
     | orderQuantity order <= 0 = Left NonPositiveQuantity
     | orderLimitPrice order <= 0 = Left NonPositivePrice
     | not (isPermittedPair state order) = Left UnsupportedPair
     | not (satisfiesMarketRules state order) = Left ViolatesMarketRule
-    | hasOpposingSide seenSides order = Left OpposingSidesSamePair
     | not (hasSufficientInventory state reserved order) = Left InsufficientInventory
-    | otherwise =
-        let reserved' = reserveOrder state reserved order
-            pairKey = (orderEntityId order, orderMarketId order, orderBaseAsset order, orderQuoteAsset order)
-            seenSides' = Map.insert pairKey (orderSide order) seenSides
-         in Right (reserved', seenSides')
+    | otherwise = Right (reserveOrder state reserved order)
 
 isActiveOrderingEntity :: GameState -> Order -> Bool
 isActiveOrderingEntity state order =
     case Map.lookup (orderEntityId order) (gameEntities state) of
-        Just entity -> entityKind entity == PlayerEntity && entityAlive entity
+        Just entity -> entityAlive entity
         Nothing -> False
 
 isPermittedPair :: GameState -> Order -> Bool
@@ -111,21 +104,13 @@ marketRuleAllowsOrder :: GameState -> Market -> Order -> MarketRule -> Bool
 marketRuleAllowsOrder state market order rule =
     case rule of
         QuoteAssetMustBeOwnerIssuedCurrency ->
-            case assetIdForSeries state quoteSeries of
+            case baseAssetIdForSeries state quoteSeries of
                 Nothing -> False
                 Just quoteAsset ->
                     isCurrencyAsset quoteAsset
                         && Map.lookup quoteAsset (gameAssetIssuers state) == Just (marketOwner market)
   where
     quoteSeries = orderQuoteAsset order
-
-hasOpposingSide :: Map (EntityId, MarketId, SeriesId, SeriesId) Side -> Order -> Bool
-hasOpposingSide seenSides order =
-    case Map.lookup pairKey seenSides of
-        Nothing -> False
-        Just seenSide -> seenSide /= orderSide order
-  where
-    pairKey = (orderEntityId order, orderMarketId order, orderBaseAsset order, orderQuoteAsset order)
 
 hasSufficientInventory :: GameState -> Holdings -> Order -> Bool
 hasSufficientInventory state reserved order =
